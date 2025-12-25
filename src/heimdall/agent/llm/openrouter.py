@@ -68,9 +68,18 @@ class OpenRouterLLM(BaseLLM):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
+        response_schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Generate chat completion with optional tool calling."""
+        """
+        Generate chat completion with optional tool calling or structured output.
+
+        Args:
+            messages: Chat messages
+            tools: Optional tool definitions
+            tool_choice: Tool choice mode
+            response_schema: JSON schema for structured output (enforces format)
+        """
         # Build extra headers for OpenRouter
         extra_headers = {
             "X-Title": self._site_name,
@@ -84,7 +93,17 @@ class OpenRouterLLM(BaseLLM):
             "extra_headers": extra_headers,
         }
 
-        if tools:
+        # Use JSON Schema mode if provided (more reliable than free-form text)
+        if response_schema:
+            params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "agent_output",
+                    "strict": True,
+                    "schema": response_schema,
+                },
+            }
+        elif tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice
 

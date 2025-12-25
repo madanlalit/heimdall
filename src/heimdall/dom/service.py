@@ -193,17 +193,86 @@ class DOMNode(BaseModel):
 
     @property
     def is_interactive(self) -> bool:
-        """Check if node is interactive."""
-        interactive_tags = {"A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL"}
-        clickable_roles = {"button", "link", "checkbox", "radio", "menuitem", "tab"}
+        """
+        Check if node is interactive.
 
+        Uses comprehensive detection matching browser-use:
+        - Interactive HTML tags
+        - ARIA roles (including textbox, combobox for divs like ChatGPT input)
+        - Event handlers (onclick, etc.)
+        - Contenteditable attribute
+        - Tabindex attribute
+        - Cursor style (pointer)
+        """
+        # Interactive HTML tags (including form elements, links, etc.)
+        interactive_tags = {
+            "A",
+            "BUTTON",
+            "INPUT",
+            "SELECT",
+            "TEXTAREA",
+            "LABEL",
+            "DETAILS",
+            "SUMMARY",
+            "OPTION",
+            "OPTGROUP",
+        }
+
+        # Interactive ARIA roles (covers divs with role="textbox", etc.)
+        interactive_roles = {
+            "button",
+            "link",
+            "menuitem",
+            "option",
+            "radio",
+            "checkbox",
+            "tab",
+            "textbox",
+            "combobox",
+            "slider",
+            "spinbutton",
+            "search",
+            "searchbox",
+            "listbox",
+            "switch",
+            "treeitem",
+        }
+
+        # Check by tag name
         if self.node_name.upper() in interactive_tags:
             return True
-        if self.ax_role in clickable_roles:
+
+        # Check by accessibility role (from AX tree)
+        if self.ax_role in interactive_roles:
             return True
-        has_onclick = self.attributes.get("onclick")
-        has_clickable_role = self.attributes.get("role") in clickable_roles
-        return bool(has_onclick or has_clickable_role)
+
+        # Check attributes for interactivity
+        if self.attributes:
+            # ARIA role attribute (for divs with role="textbox" like ChatGPT)
+            role = self.attributes.get("role", "")
+            if role in interactive_roles:
+                return True
+
+            # Contenteditable (rich text editors, ChatGPT input, etc.)
+            contenteditable = self.attributes.get("contenteditable", "")
+            if contenteditable and contenteditable.lower() not in ("false", ""):
+                return True
+
+            # Event handlers
+            event_handlers = {"onclick", "onmousedown", "onmouseup", "onkeydown", "onkeyup"}
+            if any(attr in self.attributes for attr in event_handlers):
+                return True
+
+            # Tabindex (explicitly focusable)
+            if "tabindex" in self.attributes:
+                return True
+
+            # Cursor pointer in style (indicates clickable)
+            style = self.attributes.get("style", "")
+            if "cursor" in style and "pointer" in style:
+                return True
+
+        return False
 
     @property
     def is_visible(self) -> bool:
@@ -302,14 +371,31 @@ class DOMSerializer:
         """Create human-readable description."""
         parts = [node.node_name.lower()]
 
+        # Show accessibility name (button text, link text, etc.)
         if node.ax_name:
             parts.append(f'"{node.ax_name}"')
 
+        # Show ARIA role for divs with textbox role (like ChatGPT input)
+        role = node.attributes.get("role", "") or node.ax_role
+        if role and node.node_name.upper() == "DIV":
+            parts.append(f"role={role}")
+
+        # Show contenteditable (rich text editors, chat inputs)
+        if node.attributes.get("contenteditable"):
+            parts.append("contenteditable")
+
+        # Show type for inputs
         if node.attributes.get("type"):
             parts.append(f"type={node.attributes['type']}")
 
-        if node.attributes.get("placeholder"):
-            parts.append(f"placeholder={node.attributes['placeholder']}")
+        # Show placeholder (standard and data-placeholder for contenteditable)
+        placeholder = node.attributes.get("placeholder") or node.attributes.get("data-placeholder")
+        if placeholder:
+            parts.append(f"placeholder={placeholder[:30]}")
+
+        # Show aria-label if no ax_name
+        if not node.ax_name and node.attributes.get("aria-label"):
+            parts.append(f'"{node.attributes["aria-label"]}"')
 
         return " ".join(parts)
 

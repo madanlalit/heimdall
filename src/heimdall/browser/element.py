@@ -132,8 +132,14 @@ class Element:
             text: Text to type
             clear: If True, clear existing content first
         """
-        # Focus element first
-        await self.focus()
+        # Try to focus element first (may fail for contenteditable divs)
+        try:
+            await self.focus()
+        except Exception as e:
+            # Fallback: click to focus (works for contenteditable divs like ChatGPT)
+            logger.debug(f"DOM.focus failed ({e}), using click to focus")
+            await self.click()
+            await asyncio.sleep(0.1)  # Wait for focus to take effect
 
         client = self._session.cdp_client
         session_id = self._session.session_id
@@ -193,19 +199,39 @@ class Element:
         )
         node_id = result.get("node", {}).get("nodeId")
 
-        if node_id:
-            await client.send.DOM.focus(
-                {"nodeId": node_id},
-                session_id=session_id,
-            )
-        else:
-            # Fallback: use JavaScript
-            await client.send.DOM.focus(
+        try:
+            if node_id:
+                await client.send.DOM.focus(
+                    {"nodeId": node_id},
+                    session_id=session_id,
+                )
+            else:
+                await client.send.DOM.focus(
+                    {"backendNodeId": self._backend_node_id},
+                    session_id=session_id,
+                )
+            logger.debug(f"Focused element {self._backend_node_id}")
+        except Exception as e:
+            # DOM.focus can fail for contenteditable elements
+            # Try JavaScript focus as fallback
+            logger.debug(f"DOM.focus failed ({e}), trying JS focus")
+            result = await client.send.DOM.resolveNode(
                 {"backendNodeId": self._backend_node_id},
                 session_id=session_id,
             )
-
-        logger.debug(f"Focused element {self._backend_node_id}")
+            object_id = result.get("object", {}).get("objectId")
+            if object_id:
+                await client.send.Runtime.callFunctionOn(
+                    {
+                        "objectId": object_id,
+                        "functionDeclaration": "function() { this.focus(); }",
+                        "returnByValue": True,
+                    },
+                    session_id=session_id,
+                )
+                logger.debug(f"JS focused element {self._backend_node_id}")
+            else:
+                raise RuntimeError(f"Could not focus element {self._backend_node_id}")
 
     async def scroll_into_view(self) -> None:
         """Scroll element into view."""
@@ -313,3 +339,57 @@ class Element:
             {"type": "keyUp", "key": "Backspace", "code": "Backspace"},
             session_id=session_id,
         )
+
+    async def select_option(self, value: str) -> str:
+        """
+        Select an option by value or text.
+
+        Args:
+            value: Value or visible text of the option
+
+        Returns:
+            The text of the selected option
+        """
+        client = self._session.cdp_client
+        session_id = self._session.session_id
+
+        # Get object ID
+        result = await client.send.DOM.resolveNode(
+            {"backendNodeId": self._backend_node_id},
+            session_id=session_id,
+        )
+        object_id = result.get("object", {}).get("objectId")
+
+        if not object_id:
+            raise RuntimeError(f"Could not resolve element {self._backend_node_id}")
+
+        # Execute JS on the element
+        result = await client.send.Runtime.callFunctionOn(
+            {
+                "objectId": object_id,
+                "functionDeclaration": """
+                    function(value) {
+                        const node = this;
+                        if (node.tagName !== 'SELECT') throw new Error('Not a select element');
+
+                        for (let opt of node.options) {
+                            if (opt.value === value || opt.text === value) {
+                                opt.selected = true;
+                                node.dispatchEvent(new Event('change', { bubbles: true }));
+                                return opt.text;
+                            }
+                        }
+                        throw new Error('Option not found: ' + value);
+                    }
+                """,
+                "arguments": [{"value": value}],
+                "returnByValue": True,
+                "awaitPromise": True,
+            },
+            session_id=session_id,
+        )
+
+        if "exceptionDetails" in result:
+            raise RuntimeError(f"Selection failed: {result['exceptionDetails']}")
+
+        return result.get("result", {}).get("value", "")

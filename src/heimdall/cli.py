@@ -36,13 +36,18 @@ def run(
     ),
     model: str = typer.Option(None, "--model", "-m", help="LLM model name"),
     demo: bool = typer.Option(False, "--demo", help="Enable demo mode with visual feedback"),
+    vision: bool = typer.Option(
+        False, "--vision", help="Send screenshots to LLM for better context"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """Run browser automation task."""
+    from typing import Literal
+
     from heimdall.logging import setup_logging
 
     # Setup logging
-    level = "DEBUG" if verbose else "INFO"
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG" if verbose else "INFO"
     setup_logging(level=level)
 
     console.print("[bold]Heimdall[/bold] - Browser Automation Agent")
@@ -70,6 +75,7 @@ def run(
                 llm_provider=llm,
                 model=model,
                 demo_mode=demo,
+                use_vision=vision,
             )
         )
 
@@ -92,12 +98,14 @@ async def _run_agent(
     llm_provider: str,
     model: str | None,
     demo_mode: bool,
+    use_vision: bool = False,
 ):
     """Run the agent with given configuration."""
     from heimdall.agent import Agent, AgentConfig
     from heimdall.agent.llm import AnthropicLLM, OpenAILLM
     from heimdall.browser import BrowserConfig, BrowserSession
     from heimdall.dom import DomService
+    from heimdall.logging import logger
 
     # Explicitly import actions to register them with the registry
     from heimdall.tools import actions as _  # noqa: F401
@@ -129,6 +137,17 @@ async def _run_agent(
         if url:
             await session.navigate(url)
 
+        # Extract allowed domains from URL (restrict to starting domain)
+        allowed_domains: list[str] = []
+        if url:
+            from heimdall.utils.domain import extract_domain_from_url
+
+            domain = extract_domain_from_url(url)
+            if domain:
+                # Allow the domain and its subdomains
+                allowed_domains = [domain, f"*.{domain}"]
+                logger.info(f"Domain restriction: {allowed_domains}")
+
         # Setup agent
         dom_service = DomService(session)
         agent = Agent(
@@ -136,7 +155,10 @@ async def _run_agent(
             dom_service=dom_service,
             registry=registry,
             llm_client=llm,
-            config=AgentConfig(),
+            config=AgentConfig(
+                use_vision=use_vision,
+                allowed_domains=allowed_domains,
+            ),
         )
 
         # Run task

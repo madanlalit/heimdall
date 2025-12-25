@@ -63,15 +63,19 @@ class ToolRegistry:
         self._actions: dict[str, Action] = {}
         self._session: BrowserSession | None = None
         self._dom_state: SerializedDOM | None = None
+        self._allowed_domains: list[str] = []
 
     def set_context(
         self,
         session: "BrowserSession",
         dom_state: "SerializedDOM | None" = None,
+        allowed_domains: list[str] | None = None,
     ) -> None:
         """Set execution context for actions."""
         self._session = session
         self._dom_state = dom_state
+        if allowed_domains is not None:
+            self._allowed_domains = allowed_domains
 
     def action(self, description: str) -> Callable[[ActionFunc], ActionFunc]:
         """
@@ -163,6 +167,8 @@ class ToolRegistry:
             kwargs["session"] = self._session
         if "dom_state" in sig.parameters:
             kwargs["dom_state"] = self._dom_state
+        if "allowed_domains" in sig.parameters:
+            kwargs["allowed_domains"] = self._allowed_domains
 
         # Execute action
         try:

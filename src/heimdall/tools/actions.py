@@ -83,8 +83,17 @@ async def type_text(
 async def navigate(
     url: str,
     session: "BrowserSession",
+    allowed_domains: list[str] | None = None,
 ) -> ActionResult:
     """Navigate to a URL."""
+    from heimdall.utils.domain import is_url_allowed
+
+    # Check if URL is allowed
+    if allowed_domains and not is_url_allowed(url, allowed_domains):
+        return ActionResult.fail(
+            f"Navigation blocked: {url} is not in allowed domains {allowed_domains}"
+        )
+
     try:
         await session.navigate(url)
         current_url = await session.get_url()
@@ -196,9 +205,9 @@ async def execute_js(
 
 
 @action("Mark task as complete")
-async def done(message: str = "Task completed") -> ActionResult:
-    """Mark the current task as complete."""
-    return ActionResult.ok(message, done=True)
+async def done(message: str = "Task completed", success: bool = True) -> ActionResult:
+    """Mark the current task as complete with success/failure status."""
+    return ActionResult.ok(message, done=True, success=success)
 
 
 @action("Hover over element by index")
@@ -252,3 +261,165 @@ async def press_key(
         return ActionResult.ok(f"Pressed {key}")
     except Exception as e:
         return ActionResult.fail(f"Key press failed: {e}")
+
+
+@action("Ask human for guidance when stuck or need help")
+async def ask_human(
+    question: str,
+) -> ActionResult:
+    """
+    Pause execution and ask the human for guidance.
+
+    Use this when:
+    - You are stuck and can't find an element
+    - You're unsure which path to take
+    - You need clarification on the task
+    - Login is required but you don't have credentials
+
+    Args:
+        question: Clear question describing what help you need
+
+    Returns:
+        The human's response with guidance
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+
+    console = Console()
+
+    # Display the agent's question prominently
+    console.print()
+    console.print(
+        Panel(
+            f"[bold yellow]🤖 Agent needs help:[/bold yellow]\n\n{question}",
+            title="[bold blue]Human Input Required[/bold blue]",
+            border_style="blue",
+        )
+    )
+
+    # Get human response
+    try:
+        import asyncio
+        from functools import partial
+
+        # Use partial to avoid blocking the event loop with synchronous I/O
+        prompt_func = partial(
+            Prompt.ask,
+            "[bold green]Your guidance[/bold green]",
+            console=console,
+        )
+        response: str = await asyncio.to_thread(prompt_func)
+
+        if not response.strip():
+            return ActionResult.fail("No guidance provided")
+
+        console.print("[dim]Continuing with your guidance...[/dim]\n")
+
+        return ActionResult.ok(
+            f"Human guidance received: {response}",
+            human_response=response,
+            guidance=response,
+        )
+    except (KeyboardInterrupt, EOFError):
+        return ActionResult.fail("Human input cancelled")
+
+
+@action("Search the web using Google")
+async def search(
+    query: str,
+    session: "BrowserSession",
+) -> ActionResult:
+    """
+    Search the web using Google.
+
+    Args:
+        query: Search query string
+    """
+    import urllib.parse
+
+    search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+
+    try:
+        await session.navigate(search_url)
+        return ActionResult.ok(
+            f"Searched for: {query}",
+            query=query,
+            url=search_url,
+        )
+    except Exception as e:
+        return ActionResult.fail(f"Search failed: {e}")
+
+
+@action("Select an option from a dropdown by value or text")
+async def select_option(
+    index: int,
+    value: str,
+    session: "BrowserSession",
+    dom_state: "SerializedDOM",
+) -> ActionResult:
+    """
+    Select an option from a dropdown/select element.
+
+    Args:
+        index: Element index of the select dropdown
+        value: Value or visible text of the option to select
+    """
+    if index not in dom_state.selector_map:
+        return ActionResult.fail(f"Invalid element index: {index}")
+
+    element_info = dom_state.selector_map[index]
+    backend_node_id = element_info["backend_node_id"]
+
+    from heimdall.browser.element import Element
+
+    element = Element(session, backend_node_id)
+
+    try:
+        await element.scroll_into_view()
+        selected_text = await element.select_option(value)
+        return ActionResult.ok(f"Selected '{selected_text}' from dropdown {index}")
+
+    except Exception as e:
+        return ActionResult.fail(f"Select option failed: {e}")
+
+
+@action("Focus on an element (useful before typing)")
+async def focus(
+    index: int,
+    session: "BrowserSession",
+    dom_state: "SerializedDOM",
+) -> ActionResult:
+    """
+    Focus on an element. Useful for focusing input fields before typing.
+
+    Args:
+        index: Element index to focus
+    """
+    from heimdall.browser.element import Element
+
+    if index not in dom_state.selector_map:
+        return ActionResult.fail(f"Invalid element index: {index}")
+
+    element_info = dom_state.selector_map[index]
+    backend_node_id = element_info["backend_node_id"]
+
+    element = Element(session, backend_node_id)
+
+    try:
+        await element.scroll_into_view()
+        await element.focus()
+        return ActionResult.ok(f"Focused element {index}")
+    except Exception as e:
+        return ActionResult.fail(f"Focus failed: {e}")
+
+
+@action("Go forward in browser history")
+async def go_forward(session: "BrowserSession") -> ActionResult:
+    """Go forward in browser history."""
+    try:
+        await session.execute_js("window.history.forward()")
+        await asyncio.sleep(0.5)
+        return ActionResult.ok("Went forward")
+    except Exception as e:
+        return ActionResult.fail(f"Go forward failed: {e}")

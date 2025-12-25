@@ -337,6 +337,98 @@ class BrowserSession(BaseModel):
 
         logger.warning(f"Page load timeout after {timeout}s")
 
+    async def wait_for_stable(
+        self,
+        network_idle_ms: int = 500,
+        dom_idle_ms: int = 300,
+        timeout: float = 10.0,
+    ) -> None:
+        """
+        Wait for page to become stable.
+
+        Waits for:
+        1. No pending network requests for network_idle_ms
+        2. No DOM mutations for dom_idle_ms
+
+        Args:
+            network_idle_ms: Time with no network activity to consider stable
+            dom_idle_ms: Time with no DOM mutations to consider stable
+            timeout: Max time to wait
+        """
+        # Inject stability detection script
+        script = """
+        (function() {
+            if (window.__heimdallStabilityObserver) return;
+            
+            let lastNetworkActivity = Date.now();
+            let lastDomMutation = Date.now();
+            let pendingRequests = 0;
+            
+            // Track network
+            const origFetch = window.fetch;
+            window.fetch = function(...args) {
+                pendingRequests++;
+                lastNetworkActivity = Date.now();
+                return origFetch.apply(this, args).finally(() => {
+                    pendingRequests--;
+                    lastNetworkActivity = Date.now();
+                });
+            };
+            
+            const origXHR = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function(...args) {
+                pendingRequests++;
+                lastNetworkActivity = Date.now();
+                this.addEventListener('loadend', () => {
+                    pendingRequests--;
+                    lastNetworkActivity = Date.now();
+                });
+                return origXHR.apply(this, args);
+            };
+            
+            // Track DOM
+            const observer = new MutationObserver(() => {
+                lastDomMutation = Date.now();
+            });
+            observer.observe(document.body || document.documentElement, {
+                childList: true, subtree: true, attributes: true
+            });
+            
+            window.__heimdallStabilityObserver = {
+                isStable: function(networkIdleMs, domIdleMs) {
+                    const now = Date.now();
+                    const networkIdle = pendingRequests === 0 && 
+                        (now - lastNetworkActivity) >= networkIdleMs;
+                    const domIdle = (now - lastDomMutation) >= domIdleMs;
+                    return networkIdle && domIdle;
+                }
+            };
+        })();
+        """
+        try:
+            await self.execute_js(script)
+        except Exception as e:
+            logger.debug(f"Could not inject stability script: {e}")
+            # Fallback: just wait a bit
+            await asyncio.sleep(0.5)
+            return
+
+        # Poll for stability
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < timeout:
+            try:
+                is_stable = await self.execute_js(
+                    f"window.__heimdallStabilityObserver?.isStable({network_idle_ms}, {dom_idle_ms}) ?? true"
+                )
+                if is_stable:
+                    logger.debug("Page stable")
+                    return
+            except Exception:
+                pass
+            await asyncio.sleep(0.1)
+
+        logger.debug(f"Page stability timeout after {timeout}s")
+
     def _find_free_port(self) -> int:
         """Find a free port for CDP."""
         import socket
