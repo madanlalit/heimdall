@@ -81,7 +81,7 @@ def run(
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 async def _run_agent(
@@ -98,10 +98,10 @@ async def _run_agent(
     from heimdall.agent.llm import AnthropicLLM, OpenAILLM
     from heimdall.browser import BrowserConfig, BrowserSession
     from heimdall.dom import DomService
-    from heimdall.tools import registry
 
     # Explicitly import actions to register them with the registry
     from heimdall.tools import actions as _  # noqa: F401
+    from heimdall.tools import registry
 
     print(f"Registered {len(registry.schema())} actions")  # Debug
 

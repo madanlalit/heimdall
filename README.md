@@ -31,6 +31,20 @@ heimdall version
 - 📊 **Context Collection** - DOM, selectors, network, screenshots per action
 - 🔄 **Language-Agnostic Output** - JSON format usable by any framework
 
+## Architecture
+
+```mermaid
+graph TD
+    CLI[CLI] --> Agent[Agent Loop]
+    Agent --> LLM[LLM Client]
+    Agent --> DOM[DOM Service]
+    Agent --> Registry[Tool Registry]
+    Registry --> Actions[13 Actions]
+    DOM --> Session[Browser Session]
+    Actions --> Session
+    Session --> CDP[CDP Protocol]
+```
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
@@ -41,7 +55,7 @@ heimdall version
 
 ```bash
 # Clone and install
-git clone https://github.com/heimdall-automation/heimdall.git
+git clone https://github.com/madanlalit/heimdall.git
 cd heimdall
 uv sync --dev
 
@@ -50,6 +64,9 @@ pytest
 
 # Lint
 ruff check src/
+
+# Type check
+uvx ty check
 ```
 
 ## License

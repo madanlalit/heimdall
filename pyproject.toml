@@ -44,7 +44,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "ruff>=0.1.0",
-    "mypy>=1.0.0",
+    "ty",
 ]
 
 [project.scripts]
@@ -77,11 +77,24 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_return_any = true
-warn_unused_ignores = true
+[tool.ty.environment]
+python-version = "3.11"
+root = ["./src"]
+
+[tool.ty.src]
+include = ["src/"]
+exclude = ["browser-use/", "examples/", "tests/"]
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.ty.rules]
+# Enable stricter rules (off by default)
+possibly-unresolved-reference = "warn"
+redundant-cast = "warn"
+unused-ignore-comment = "warn"
+# Treat deprecation warnings as errors
+deprecated = "error"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

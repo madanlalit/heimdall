@@ -9,9 +9,12 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Any, TypeAlias, cast, get_type_hints
 
 from pydantic import BaseModel, Field, create_model
+
+# Type alias for functions (callables with __name__)
+ActionFunc: TypeAlias = Callable[..., Any]
 
 if TYPE_CHECKING:
     from heimdall.browser.session import BrowserSession
@@ -70,7 +73,7 @@ class ToolRegistry:
         self._session = session
         self._dom_state = dom_state
 
-    def action(self, description: str) -> Callable:
+    def action(self, description: str) -> Callable[[ActionFunc], ActionFunc]:
         """
         Decorator to register an action.
 
@@ -80,24 +83,27 @@ class ToolRegistry:
                 ...
         """
 
-        def decorator(func: Callable) -> Callable:
+        def decorator(func: ActionFunc) -> ActionFunc:
             # Generate Pydantic model from function signature
             param_model = self._create_param_model(func)
 
-            action = Action(
-                name=func.__name__,
+            # Get function name (functions always have __name__)
+            func_name = cast(str, getattr(func, "__name__", "unknown"))
+
+            action_obj = Action(
+                name=func_name,
                 description=description,
                 func=func,
                 param_model=param_model,
             )
-            self._actions[func.__name__] = action
+            self._actions[func_name] = action_obj
 
-            logger.debug(f"Registered action: {func.__name__}")
+            logger.debug(f"Registered action: {func_name}")
             return func
 
         return decorator
 
-    def _create_param_model(self, func: Callable) -> type[BaseModel]:
+    def _create_param_model(self, func: ActionFunc) -> type[BaseModel]:
         """Create Pydantic model from function parameters."""
         sig = inspect.signature(func)
 
@@ -106,9 +112,9 @@ class ToolRegistry:
             hints = get_type_hints(func, include_extras=False)
         except NameError:
             # Fall back to raw annotations if type hints can't be resolved
-            hints = func.__annotations__ if hasattr(func, "__annotations__") else {}
+            hints = getattr(func, "__annotations__", {})
 
-        fields = {}
+        fields: dict[str, Any] = {}
         for name, param in sig.parameters.items():
             if name in ("self", "session", "dom_state"):
                 continue
@@ -121,7 +127,9 @@ class ToolRegistry:
             default = ... if param.default is inspect.Parameter.empty else param.default
             fields[name] = (annotation, default)
 
-        return create_model(f"{func.__name__}Params", **fields)
+        func_name = cast(str, getattr(func, "__name__", "unknown"))
+        # create_model has complex overloads, dynamic kwargs typing
+        return create_model(f"{func_name}Params", **fields)
 
     async def execute(self, name: str, params: dict) -> ActionResult:
         """
@@ -172,33 +180,35 @@ class ToolRegistry:
             logger.error(f"Action {name} failed: {e}")
             return ActionResult.fail(str(e))
 
-    def schema(self) -> list[dict]:
+    def schema(self) -> list[dict[str, Any]]:
         """
         Generate LLM tool calling schema.
 
         Returns:
             List of tool definitions for LLM
         """
-        tools = []
+        tools: list[dict[str, Any]] = []
 
         for name, action in self._actions.items():
-            tool = {
+            parameters: dict[str, Any] = {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            }
+
+            if action.param_model:
+                model_schema = action.param_model.model_json_schema()
+                parameters["properties"] = model_schema.get("properties", {})
+                parameters["required"] = model_schema.get("required", [])
+
+            tool: dict[str, Any] = {
                 "type": "function",
                 "function": {
                     "name": name,
                     "description": action.description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
+                    "parameters": parameters,
                 },
             }
-
-            if action.param_model:
-                schema = action.param_model.model_json_schema()
-                tool["function"]["parameters"]["properties"] = schema.get("properties", {})
-                tool["function"]["parameters"]["required"] = schema.get("required", [])
 
             tools.append(tool)
 

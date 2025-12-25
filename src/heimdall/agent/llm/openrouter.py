@@ -34,7 +34,7 @@ class OpenRouterLLM(BaseLLM):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "anthropic/claude-3.5-sonnet",
+        model: str = "google/gemini-3-flash-preview",
         temperature: float = 0.0,
         max_tokens: int = 4096,
         site_url: str | None = None,
@@ -65,15 +65,14 @@ class OpenRouterLLM(BaseLLM):
 
     async def chat_completion(
         self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
-        **kwargs,
-    ) -> dict:
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Generate chat completion with optional tool calling."""
         # Build extra headers for OpenRouter
         extra_headers = {
-            "HTTP-Referer": self._site_url or "https://github.com/heimdall-automation/heimdall",
             "X-Title": self._site_name,
         }
 

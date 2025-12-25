@@ -201,7 +201,9 @@ class DOMNode(BaseModel):
             return True
         if self.ax_role in clickable_roles:
             return True
-        return bool(self.attributes.get("onclick") or self.attributes.get("role") in clickable_roles)
+        has_onclick = self.attributes.get("onclick")
+        has_clickable_role = self.attributes.get("role") in clickable_roles
+        return bool(has_onclick or has_clickable_role)
 
     @property
     def is_visible(self) -> bool:

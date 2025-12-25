@@ -88,12 +88,12 @@ class BaseWatchdog(ABC):
             await self._cleanup()
 
     async def _initialize(self) -> None:
-        """Initialize watchdog state. Override in subclasses."""
-        pass
+        """Initialize watchdog state. Optional hook for subclasses."""
+        return None
 
     async def _cleanup(self) -> None:
-        """Cleanup on stop. Override in subclasses."""
-        pass
+        """Cleanup on stop. Optional hook for subclasses."""
+        return None
 
     @abstractmethod
     async def _check(self) -> None:
