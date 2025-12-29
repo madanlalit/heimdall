@@ -20,6 +20,13 @@ from heimdall.agent.views import (
     AgentOutput,
     BrowserStateSnapshot,
 )
+from heimdall.events.bus import EventBus
+from heimdall.watchdogs import (
+    DOMWatchdog,
+    ErrorWatchdog,
+    NavigationWatchdog,
+    NetworkWatchdog,
+)
 
 if TYPE_CHECKING:
     from heimdall.browser.session import BrowserSession
@@ -95,11 +102,19 @@ class Agent:
         self._dom_service = dom_service
         self._registry = registry
         self._llm = llm_client
-        self._bus = event_bus
+        self._bus = event_bus or EventBus()
         self._config = config or AgentConfig()
         self._state = AgentState()
         self._history = AgentHistoryList()
         self._message_builder = MessageBuilder()
+
+        # Initialize watchdogs
+        self._watchdogs = {
+            "navigation": NavigationWatchdog(self._session, self._bus),
+            "network": NetworkWatchdog(self._session, self._bus),
+            "dom": DOMWatchdog(self._session, self._bus),
+            "error": ErrorWatchdog(self._session, self._bus),
+        }
 
         # File system for persisting agent data (todo.md, etc.)
         from heimdall.agent.filesystem import FileSystem
@@ -123,6 +138,10 @@ class Agent:
         # Initialize todo with task
         self._filesystem.update_todo([f"Complete: {task[:100]}"])
 
+        # Start watchdogs
+        for w in self._watchdogs.values():
+            await w.start()
+
         try:
             while not self._should_stop():
                 await self._execute_step(task)
@@ -133,6 +152,11 @@ class Agent:
             logger.error(f"Agent error: {e}")
             self._state.error = str(e)
             self._state.success = False
+
+        finally:
+            # Stop watchdogs
+            for w in self._watchdogs.values():
+                await w.stop()
 
         logger.info(f"Task complete: success={self._state.success}")
         return self._state
@@ -238,16 +262,20 @@ class Agent:
                     "click",
                     "navigate",
                     "type_text",
+                    "press_key",
                 ):
                     try:
-                        await self._session.wait_for_stable(timeout=self._config.stability_timeout)
+                        # Use watchdog for smarter waiting (wait for load + stability)
+                        nav_watchdog: NavigationWatchdog = self._watchdogs["navigation"]  # type: ignore
+                        await nav_watchdog.wait_for_load(timeout=self._config.stability_timeout)
+
                         # Check if URL changed (indicates page navigation)
                         new_dom = await self._dom_service.get_state()
                         if hasattr(new_dom, "url") and hasattr(dom_state, "url"):
                             if new_dom.url != dom_state.url:
                                 page_changed = True
                     except Exception as e:
-                        logger.debug(f"wait_for_stable error: {e}")
+                        logger.debug(f"Smart wait failed: {e}")
             else:
                 self._state.consecutive_failures += 1
                 self._state.total_failures += 1
