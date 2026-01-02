@@ -39,6 +39,16 @@ def run(
     vision: bool = typer.Option(
         False, "--vision", help="Send screenshots to LLM for better context"
     ),
+    user_data_dir: str | None = typer.Option(
+        None,
+        "--user-data-dir",
+        help="Chrome user data directory (e.g., ~/Library/Application Support/Google/Chrome)",
+    ),
+    profile_directory: str = typer.Option(
+        "Default",
+        "--profile-directory",
+        help="Chrome profile name (Default, Profile 1, etc.)",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """Run browser automation task."""
@@ -76,6 +86,8 @@ def run(
                 model=model,
                 demo_mode=demo,
                 use_vision=vision,
+                user_data_dir=user_data_dir,
+                profile_directory=profile_directory,
             )
         )
 
@@ -99,6 +111,8 @@ async def _run_agent(
     model: str | None,
     demo_mode: bool,
     use_vision: bool = False,
+    user_data_dir: str | None = None,
+    profile_directory: str = "Default",
 ):
     """Run the agent with given configuration."""
     from heimdall.agent import Agent, AgentConfig
@@ -123,11 +137,27 @@ async def _run_agent(
     else:
         llm = OpenAILLM(model=model or "gpt-4")
 
-    # Setup browser with temp profile to avoid conflicts with running Chrome
-    import tempfile
+    # Setup browser - use provided profile or create temp profile
+    if user_data_dir:
+        # Use existing Chrome profile with cookies
+        from pathlib import Path
 
-    temp_dir = tempfile.mkdtemp(prefix="heimdall_chrome_")
-    config = BrowserConfig(headless=headless, user_data_dir=temp_dir)
+        expanded_dir = str(Path(user_data_dir).expanduser())
+        config = BrowserConfig(
+            headless=headless,
+            user_data_dir=expanded_dir,
+            profile_directory=profile_directory,
+            disable_extensions=False,  # Keep extensions when using existing profile
+        )
+        logger.info(f"Using Chrome profile: {expanded_dir}/{profile_directory}")
+    else:
+        # Create temp profile to avoid conflicts with running Chrome
+        import tempfile
+
+        temp_dir = tempfile.mkdtemp(prefix="heimdall_chrome_")
+        config = BrowserConfig(headless=headless, user_data_dir=temp_dir)
+        logger.info(f"Using temp profile: {temp_dir}")
+
     session = BrowserSession(config=config)
 
     try:
