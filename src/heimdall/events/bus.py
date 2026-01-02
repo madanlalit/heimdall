@@ -106,7 +106,7 @@ class EventBus:
             List of handler results
         """
         event_type = type(event)
-        results = []
+        results: list[Any] = []
 
         # Get all handlers (regular + once)
         handlers = list(self._handlers.get(event_type, []))

@@ -49,6 +49,12 @@ def run(
         "--profile-directory",
         help="Chrome profile name (Default, Profile 1, etc.)",
     ),
+    instructions: str | None = typer.Option(
+        None,
+        "--instructions",
+        "-i",
+        help="Path to file with custom instructions to extend the system prompt",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """Run browser automation task."""
@@ -74,6 +80,16 @@ def run(
     else:
         task_content = task
 
+    # Load custom instructions from file if provided
+    extend_system_prompt = None
+    if instructions:
+        instructions_path = Path(instructions)
+        if instructions_path.exists():
+            extend_system_prompt = instructions_path.read_text()
+            console.print(f"Loaded instructions from: {instructions_path}")
+        else:
+            console.print(f"[yellow]Warning: Instructions file not found: {instructions}[/yellow]")
+
     # Run agent
     try:
         result = asyncio.run(
@@ -88,6 +104,7 @@ def run(
                 use_vision=vision,
                 user_data_dir=user_data_dir,
                 profile_directory=profile_directory,
+                extend_system_prompt=extend_system_prompt,
             )
         )
 
@@ -113,10 +130,11 @@ async def _run_agent(
     use_vision: bool = False,
     user_data_dir: str | None = None,
     profile_directory: str = "Default",
+    extend_system_prompt: str | None = None,
 ):
     """Run the agent with given configuration."""
     from heimdall.agent import Agent, AgentConfig
-    from heimdall.agent.llm import AnthropicLLM, OpenAILLM
+    from heimdall.agent.llm import AnthropicLLM, BaseLLM, OpenAILLM
     from heimdall.browser import BrowserConfig, BrowserSession
     from heimdall.dom import DomService
     from heimdall.logging import logger
@@ -128,6 +146,7 @@ async def _run_agent(
     print(f"Registered {len(registry.schema())} actions")  # Debug
 
     # Setup LLM
+    llm: BaseLLM
     if llm_provider == "anthropic":
         llm = AnthropicLLM(model=model or "claude-3-5-sonnet-20241022")
     elif llm_provider == "openrouter":
@@ -140,8 +159,6 @@ async def _run_agent(
     # Setup browser - use provided profile or create temp profile
     if user_data_dir:
         # Use existing Chrome profile with cookies
-        from pathlib import Path
-
         expanded_dir = str(Path(user_data_dir).expanduser())
         config = BrowserConfig(
             headless=headless,
@@ -188,6 +205,7 @@ async def _run_agent(
             config=AgentConfig(
                 use_vision=use_vision,
                 allowed_domains=allowed_domains,
+                extend_system_prompt=extend_system_prompt,
             ),
         )
 
@@ -218,7 +236,8 @@ def _load_task_file(path: Path) -> str:
 
     # Extract task description
     if isinstance(data, dict):
-        return data.get("task", data.get("description", str(data)))
+        task_val = data.get("task") or data.get("description")
+        return str(task_val) if task_val is not None else str(data)
     elif isinstance(data, list):
         return "\n".join(str(item) for item in data)
     else:

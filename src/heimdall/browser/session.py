@@ -489,9 +489,11 @@ class BrowserSession(BaseModel):
         start = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start < timeout:
             try:
-                is_stable = await self.execute_js(
-                    f"window.__heimdallStabilityObserver?.isStable({network_idle_ms}, {dom_idle_ms}) ?? true"
+                js_expr = (
+                    f"window.__heimdallStabilityObserver?.isStable"
+                    f"({network_idle_ms}, {dom_idle_ms}) ?? true"
                 )
+                is_stable = await self.execute_js(js_expr)
                 if is_stable:
                     logger.debug("Page stable")
                     return

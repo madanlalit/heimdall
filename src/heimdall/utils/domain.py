@@ -46,11 +46,7 @@ def is_url_allowed(url: str, allowed_domains: list[str]) -> bool:
         return False
 
     # Check each allowed domain pattern
-    for pattern in allowed_domains:
-        if _matches_domain(host, pattern):
-            return True
-
-    return False
+    return any(_matches_domain(host, pattern) for pattern in allowed_domains)
 
 
 def _matches_domain(host: str, pattern: str) -> bool:

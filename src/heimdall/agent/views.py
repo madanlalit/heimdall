@@ -123,7 +123,7 @@ class AgentHistory(BaseModel):
         # Format action results
         if self.results:
             action_results = []
-            for i, (action, result) in enumerate(zip(output.action, self.results, strict=False)):
+            for _i, (action, result) in enumerate(zip(output.action, self.results, strict=False)):
                 action_name = list(action.keys())[0] if action else "unknown"
                 if result.success:
                     status = "Success"

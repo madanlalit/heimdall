@@ -4,8 +4,6 @@ Schema utilities for generating optimized JSON schemas for LLM structured output
 
 from typing import Any
 
-from pydantic import BaseModel
-
 
 def create_agent_output_schema(tool_definitions: list[dict[str, Any]]) -> dict[str, Any]:
     """

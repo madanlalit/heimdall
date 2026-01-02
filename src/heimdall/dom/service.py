@@ -97,7 +97,7 @@ class DomService:
         layout: dict,
     ) -> list["DOMNode"]:
         """Build enhanced DOM tree from CDP data."""
-        nodes = []
+        nodes: list[DOMNode] = []
 
         documents = snapshot.get("documents", [])
         if not documents:

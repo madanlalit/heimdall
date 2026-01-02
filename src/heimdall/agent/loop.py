@@ -62,6 +62,10 @@ class AgentConfig(BaseModel):
     # Examples: ["chatgpt.com", "*.openai.com", "google.com"]
     allowed_domains: list[str] = Field(default_factory=list)
 
+    # Custom instructions to extend the system prompt
+    # This content is appended to the base system prompt
+    extend_system_prompt: str | None = None
+
 
 class AgentState(BaseModel):
     """Agent execution state."""
@@ -106,7 +110,9 @@ class Agent:
         self._config = config or AgentConfig()
         self._state = AgentState()
         self._history = AgentHistoryList()
-        self._message_builder = MessageBuilder()
+        self._message_builder = MessageBuilder(
+            extend_system_prompt=self._config.extend_system_prompt
+        )
 
         # Initialize watchdogs
         self._watchdogs = {
@@ -271,9 +277,12 @@ class Agent:
 
                         # Check if URL changed (indicates page navigation)
                         new_dom = await self._dom_service.get_state()
-                        if hasattr(new_dom, "url") and hasattr(dom_state, "url"):
-                            if new_dom.url != dom_state.url:
-                                page_changed = True
+                        if (
+                            hasattr(new_dom, "url")
+                            and hasattr(dom_state, "url")
+                            and new_dom.url != dom_state.url
+                        ):
+                            page_changed = True
                     except Exception as e:
                         logger.debug(f"Smart wait failed: {e}")
             else:
@@ -444,8 +453,9 @@ class Agent:
 class MessageBuilder:
     """Builds LLM messages with structured history context."""
 
-    def __init__(self):
+    def __init__(self, extend_system_prompt: str | None = None):
         self._system_prompt_cache: str | None = None
+        self._extend_system_prompt = extend_system_prompt
 
     def build(
         self,
@@ -454,9 +464,9 @@ class MessageBuilder:
         history: AgentHistoryList | None = None,
         step_info: tuple[int, int] | None = None,
         screenshot_b64: str | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Build messages for LLM with structured history."""
-        messages = []
+        messages: list[dict[str, Any]] = []
 
         # System message
         messages.append(
@@ -535,20 +545,29 @@ Interactive elements:
             return self._system_prompt_cache
 
         # Try to load from file
+        base_prompt = None
         try:
             from pathlib import Path
 
             prompt_file = Path(__file__).parent / "prompts" / "system_prompt.md"
             if prompt_file.exists():
-                self._system_prompt_cache = prompt_file.read_text()
-                return self._system_prompt_cache
+                base_prompt = prompt_file.read_text()
         except Exception:
             pass
 
         # Fallback to inline prompt
-        self._system_prompt_cache = """You are a browser automation agent.
+        if not base_prompt:
+            base_prompt = """You are a browser automation agent.
 
 Respond with JSON containing: thinking, evaluation_previous_goal, memory, next_goal, action.
 
 Always respond with valid JSON, not plain text."""
+
+        # Append custom instructions if provided
+        if self._extend_system_prompt:
+            base_prompt += (
+                f"\n\n<custom_instructions>\n{self._extend_system_prompt}\n</custom_instructions>"
+            )
+
+        self._system_prompt_cache = base_prompt
         return self._system_prompt_cache

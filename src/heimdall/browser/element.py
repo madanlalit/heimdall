@@ -231,7 +231,7 @@ class Element:
                 )
                 logger.debug(f"JS focused element {self._backend_node_id}")
             else:
-                raise RuntimeError(f"Could not focus element {self._backend_node_id}")
+                raise RuntimeError(f"Could not focus element {self._backend_node_id}") from None
 
     async def scroll_into_view(self) -> None:
         """Scroll element into view."""
