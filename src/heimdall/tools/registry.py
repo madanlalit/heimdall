@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast, get_type_hints
 
 from pydantic import BaseModel, Field, create_model
 
+from heimdall.exceptions import ActionError
+
 # Type alias for functions (callables with __name__)
 ActionFunc: TypeAlias = Callable[..., Any]
 
@@ -61,8 +63,8 @@ class ToolRegistry:
 
     def __init__(self):
         self._actions: dict[str, Action] = {}
-        self._session: BrowserSession | None = None
-        self._dom_state: SerializedDOM | None = None
+        self._session: "BrowserSession | None" = None
+        self._dom_state: "SerializedDOM | None" = None
         self._allowed_domains: list[str] = []
 
     def set_context(
@@ -164,6 +166,8 @@ class ToolRegistry:
         kwargs = dict(params)
 
         if "session" in sig.parameters:
+            if not self._session:
+                return ActionResult.fail("Browser session not initialized in context")
             kwargs["session"] = self._session
         if "dom_state" in sig.parameters:
             kwargs["dom_state"] = self._dom_state
@@ -182,9 +186,13 @@ class ToolRegistry:
 
             return result
 
-        except Exception as e:
-            logger.error(f"Action {name} failed: {e}")
+        except ActionError as e:
+            # Expected action failure
             return ActionResult.fail(str(e))
+        except Exception as e:
+            # Unexpected system error during action
+            logger.error(f"Action {name} failed: {e}", exc_info=True)
+            return ActionResult.fail(f"System error: {e}")
 
     def schema(self) -> list[dict[str, Any]]:
         """

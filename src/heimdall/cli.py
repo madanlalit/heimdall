@@ -166,15 +166,9 @@ async def _run_agent(
     print(f"Registered {len(registry.schema())} actions")  # Debug
 
     # Setup LLM
-    llm: BaseLLM
-    if llm_provider == "anthropic":
-        llm = AnthropicLLM(model=model or "claude-3-5-sonnet-20241022")
-    elif llm_provider == "openrouter":
-        from heimdall.agent.llm import OpenRouterLLM
+    from heimdall.agent.factory import create_llm_client
 
-        llm = OpenRouterLLM(model=model or "anthropic/claude-3.5-sonnet")
-    else:
-        llm = OpenAILLM(model=model or "gpt-4")
+    llm = create_llm_client(provider=llm_provider, model=model)
 
     # Setup browser - use provided profile or create temp profile
     if user_data_dir:
