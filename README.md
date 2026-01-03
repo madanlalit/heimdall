@@ -39,10 +39,19 @@ graph TD
     Agent --> LLM[LLM Client]
     Agent --> DOM[DOM Service]
     Agent --> Registry[Tool Registry]
-    Registry --> Actions[13 Actions]
+    Agent --> Watchdogs[Event Watchdogs]
+    Agent --> Collector[Context Collector]
+    Agent --> Persistence[State Manager]
+    
+    Registry --> Actions[17 Actions]
     DOM --> Session[Browser Session]
     Actions --> Session
+    Watchdogs --> Session
+    Collector --> Session
     Session --> CDP[CDP Protocol]
+    
+    Persistence --> StateFiles[.heimdall_state.json<br/>todo.md<br/>results.md]
+    Collector --> OutputFiles[context.json<br/>screenshots/<br/>network.har]
 ```
 
 ## Documentation
