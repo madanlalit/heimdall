@@ -118,6 +118,18 @@ async def go_back(session: "BrowserSession") -> ActionResult:
         return ActionResult.fail(f"Go back failed: {e}")
 
 
+@action("Refresh/reload the current page")
+async def refresh_page(session: "BrowserSession") -> ActionResult:
+    """Refresh the current page to get fresh content."""
+    try:
+        await session.execute_js("window.location.reload()")
+        await asyncio.sleep(1.0)  # Wait for page to reload
+
+        return ActionResult.ok("Page refreshed")
+    except Exception as e:
+        return ActionResult.fail(f"Refresh failed: {e}")
+
+
 @action("Scroll the page")
 async def scroll(
     direction: str,
