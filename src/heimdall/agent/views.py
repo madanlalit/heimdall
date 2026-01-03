@@ -5,6 +5,8 @@ Defines the output format that makes the agent stateful by explicitly
 tracking thinking, evaluation, memory, and goals across steps.
 """
 
+import json
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -84,12 +86,39 @@ class AgentOutput(BaseModel):
         )
 
 
+class StepMetadata(BaseModel):
+    """Metadata for a single step including timing information."""
+
+    step_start_time: float
+    step_end_time: float
+    step_number: int
+
+    @property
+    def duration_seconds(self) -> float:
+        """Calculate step duration in seconds."""
+        return self.step_end_time - self.step_start_time
+
+
 class BrowserStateSnapshot(BaseModel):
     """Snapshot of browser state for history."""
 
     url: str | None = None
     title: str | None = None
     element_count: int = 0
+    screenshot_path: str | None = None
+    screenshot_b64: str | None = None
+    interacted_element: list[dict] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "url": self.url,
+            "title": self.title,
+            "element_count": self.element_count,
+            "screenshot_path": self.screenshot_path,
+            "screenshot_b64": self.screenshot_b64,
+            "interacted_element": self.interacted_element,
+        }
 
 
 class AgentHistory(BaseModel):
@@ -99,6 +128,8 @@ class AgentHistory(BaseModel):
     model_output: AgentOutput | None = None
     results: list[ActionResult] = Field(default_factory=list)
     state: BrowserStateSnapshot = Field(default_factory=BrowserStateSnapshot)
+    metadata: StepMetadata | None = None
+    state_message: str | None = None
 
     def format_for_prompt(self) -> str:
         """Format this history item for inclusion in the prompt."""
@@ -140,6 +171,17 @@ class AgentHistory(BaseModel):
         lines.append(f"</step_{self.step_number}>")
         return "\n".join(lines)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "step_number": self.step_number,
+            "model_output": self.model_output.model_dump() if self.model_output else None,
+            "results": [r.model_dump() for r in self.results],
+            "state": self.state.to_dict(),
+            "metadata": self.metadata.model_dump() if self.metadata else None,
+            "state_message": self.state_message,
+        }
+
 
 class AgentHistoryList(BaseModel):
     """List of agent history items."""
@@ -180,3 +222,57 @@ class AgentHistoryList(BaseModel):
             if last_result.is_done:
                 return last_result.success
         return None
+
+    def total_duration_seconds(self) -> float:
+        """Get total duration of all steps in seconds."""
+        total = 0.0
+        for h in self.history:
+            if h.metadata:
+                total += h.metadata.duration_seconds
+        return total
+
+    def screenshot_paths(self, n_last: int | None = None) -> list[str | None]:
+        """Get all screenshot paths from history."""
+        if n_last is None:
+            return [h.state.screenshot_path for h in self.history]
+        else:
+            return [h.state.screenshot_path for h in self.history[-n_last:]]
+
+    def agent_steps(self) -> list[str]:
+        """Format agent history as readable step descriptions."""
+        steps = []
+        for i, h in enumerate(self.history):
+            step_text = f"Step {i + 1}:\n"
+
+            # Get actions from model_output
+            if h.model_output and h.model_output.action:
+                actions_json = json.dumps(h.model_output.action, indent=1)
+                step_text += f"Actions: {actions_json}\n"
+
+            # Get results
+            if h.results:
+                for j, result in enumerate(h.results):
+                    if result.extracted_content:
+                        step_text += f"Result {j + 1}: {result.extracted_content}\n"
+                    if result.error:
+                        step_text += f"Error {j + 1}: {result.error}\n"
+
+            steps.append(step_text)
+        return steps
+
+    def save_to_file(self, filepath: str | Path) -> None:
+        """Save history to JSON file with proper serialization."""
+        try:
+            Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+            data = {"history": [h.to_dict() for h in self.history]}
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            raise e
+
+    @classmethod
+    def load_from_file(cls, filepath: str | Path) -> "AgentHistoryList":
+        """Load history from JSON file."""
+        with open(filepath, encoding="utf-8") as f:
+            data = json.load(f)
+        return cls.model_validate(data)

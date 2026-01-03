@@ -55,6 +55,16 @@ def run(
         "-i",
         help="Path to file with custom instructions to extend the system prompt",
     ),
+    save_trace: str | None = typer.Option(
+        None,
+        "--save-trace",
+        help="Save execution trace to JSON file (e.g., trace.json)",
+    ),
+    capture_screenshots: bool = typer.Option(
+        False,
+        "--capture-screenshots",
+        help="Capture screenshots at each step (requires --save-trace)",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """Run browser automation task."""
@@ -105,13 +115,21 @@ def run(
                 user_data_dir=user_data_dir,
                 profile_directory=profile_directory,
                 extend_system_prompt=extend_system_prompt,
+                save_trace=save_trace,
+                capture_screenshots=capture_screenshots,
             )
         )
 
-        if result.success:
+        if result.is_successful():
             console.print("[green]✓ Task completed successfully[/green]")
+            console.print(f"Steps: {len(result)}")
+            console.print(f"Duration: {result.total_duration_seconds():.2f}s")
         else:
-            console.print(f"[red]✗ Task failed: {result.error}[/red]")
+            console.print("[red]✗ Task failed[/red]")
+            if result.history and result.history[-1].results:
+                error = result.history[-1].results[-1].error
+                if error:
+                    console.print(f"Error: {error}")
             raise typer.Exit(1)
 
     except Exception as e:
@@ -131,6 +149,8 @@ async def _run_agent(
     user_data_dir: str | None = None,
     profile_directory: str = "Default",
     extend_system_prompt: str | None = None,
+    save_trace: str | None = None,
+    capture_screenshots: bool = False,
 ):
     """Run the agent with given configuration."""
     from heimdall.agent import Agent, AgentConfig
@@ -206,6 +226,8 @@ async def _run_agent(
                 use_vision=use_vision,
                 allowed_domains=allowed_domains,
                 extend_system_prompt=extend_system_prompt,
+                save_trace_path=save_trace,
+                capture_screenshots=capture_screenshots,
             ),
         )
 

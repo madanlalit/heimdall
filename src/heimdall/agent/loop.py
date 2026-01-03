@@ -8,7 +8,9 @@ Uses structured output for stateful reasoning across steps.
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -19,6 +21,7 @@ from heimdall.agent.views import (
     AgentHistoryList,
     AgentOutput,
     BrowserStateSnapshot,
+    StepMetadata,
 )
 from heimdall.events.bus import EventBus
 from heimdall.watchdogs import (
@@ -65,6 +68,10 @@ class AgentConfig(BaseModel):
     # Custom instructions to extend the system prompt
     # This content is appended to the base system prompt
     extend_system_prompt: str | None = None
+
+    # Tracing options
+    save_trace_path: str | Path | None = None  # Path to save execution trace
+    capture_screenshots: bool = False  # Capture screenshots at each step
 
 
 class AgentState(BaseModel):
@@ -127,7 +134,7 @@ class Agent:
 
         self._filesystem = FileSystem()
 
-    async def run(self, task: str) -> AgentState:
+    async def run(self, task: str) -> AgentHistoryList:
         """
         Run agent to complete a task.
 
@@ -165,12 +172,22 @@ class Agent:
                 await w.stop()
 
         logger.info(f"Task complete: success={self._state.success}")
-        return self._state
+
+        # Save trace to file if configured
+        if self._config.save_trace_path:
+            try:
+                self._history.save_to_file(self._config.save_trace_path)
+                logger.info(f"Trace saved to: {self._config.save_trace_path}")
+            except Exception as e:
+                logger.error(f"Failed to save trace: {e}")
+
+        return self._history
 
     async def _execute_step(self, task: str) -> None:
         """Execute one agent step with structured output."""
         self._state.step_count += 1
         step_number = self._state.step_count
+        step_start_time = time.time()
 
         logger.debug(f"Step {step_number}")
 
@@ -182,16 +199,25 @@ class Agent:
             allowed_domains=self._config.allowed_domains,
         )
 
-        # 2. Optional: capture screenshot for vision
+        # 2. Optional: capture screenshot for vision or tracing
         screenshot_b64 = None
-        if self._config.use_vision:
+        screenshot_path = None
+        if self._config.use_vision or self._config.capture_screenshots:
             try:
                 import base64
 
                 screenshot_data = await self._session.screenshot()
                 screenshot_b64 = base64.b64encode(screenshot_data).decode()
+
+                # Save screenshot to file if tracing
+                if self._config.capture_screenshots and self._config.save_trace_path:
+                    trace_dir = Path(self._config.save_trace_path).parent / "screenshots"
+                    trace_dir.mkdir(parents=True, exist_ok=True)
+                    screenshot_path = str(trace_dir / f"step_{step_number}.png")
+                    with open(screenshot_path, "wb") as f:
+                        f.write(screenshot_data)
             except Exception as e:
-                logger.debug(f"Screenshot for vision failed: {e}")
+                logger.debug(f"Screenshot capture failed: {e}")
 
         # 3. Build messages with structured history
         messages = self._message_builder.build(
@@ -290,7 +316,8 @@ class Agent:
                 self._state.total_failures += 1
                 logger.warning(f"Action failed: {exec_result.error}")
 
-        # 7. Record step in history
+        # 7. Record step in history with timing metadata
+        step_end_time = time.time()
         history_item = AgentHistory(
             step_number=step_number,
             model_output=agent_output,
@@ -299,9 +326,24 @@ class Agent:
                 url=getattr(dom_state, "url", None),
                 title=getattr(dom_state, "title", None),
                 element_count=getattr(dom_state, "element_count", 0),
+                screenshot_path=screenshot_path,
+                screenshot_b64=screenshot_b64 if self._config.capture_screenshots else None,
+            ),
+            metadata=StepMetadata(
+                step_start_time=step_start_time,
+                step_end_time=step_end_time,
+                step_number=step_number,
             ),
         )
         self._history.add(history_item)
+
+        # Save trace incrementally after each step (in case of interruption)
+        if self._config.save_trace_path:
+            try:
+                self._history.save_to_file(self._config.save_trace_path)
+                logger.debug(f"Trace updated: {self._config.save_trace_path}")
+            except Exception as e:
+                logger.warning(f"Failed to update trace: {e}")
 
         # 8. Update todo.md if agent provided a todo list
         if agent_output.todo:
