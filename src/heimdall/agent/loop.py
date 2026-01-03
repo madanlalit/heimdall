@@ -59,6 +59,7 @@ class AgentConfig(BaseModel):
     # Wait for page stability after actions
     wait_for_stability: bool = True
     stability_timeout: float = 5.0
+    network_idle_timeout: float = 2.0  # Time to wait for network idle after navigation
 
     # Domain restriction: only allow navigation to these domains
     # If empty, all domains are allowed
@@ -134,6 +135,9 @@ class Agent:
 
         self._filesystem = FileSystem()
 
+        # Subscribe to watchdog events
+        self._subscribe_to_events()
+
     async def run(self, task: str) -> AgentHistoryList:
         """
         Run agent to complete a task.
@@ -170,6 +174,9 @@ class Agent:
             # Stop watchdogs
             for w in self._watchdogs.values():
                 await w.stop()
+
+            # Unsubscribe from events
+            self._unsubscribe_from_events()
 
         logger.info(f"Task complete: success={self._state.success}")
 
@@ -297,9 +304,29 @@ class Agent:
                     "press_key",
                 ):
                     try:
-                        # Use watchdog for smarter waiting (wait for load + stability)
+                        logger.debug("Waiting for page stability...")
+
+                        # Use navigation watchdog for page load
                         nav_watchdog: NavigationWatchdog = self._watchdogs["navigation"]  # type: ignore
-                        await nav_watchdog.wait_for_load(timeout=self._config.stability_timeout)
+                        nav_complete = await nav_watchdog.wait_for_load(
+                            timeout=self._config.stability_timeout
+                        )
+
+                        if nav_complete:
+                            logger.debug("Navigation load complete")
+
+                        # Also wait for network idle for better stability
+                        net_watchdog: NetworkWatchdog = self._watchdogs["network"]  # type: ignore
+                        net_idle = await net_watchdog.wait_for_idle(
+                            timeout=self._config.network_idle_timeout
+                        )
+
+                        if net_idle:
+                            logger.debug("Network idle detected")
+                        else:
+                            logger.debug(
+                                f"Network idle timeout ({net_watchdog.pending_count} pending)"
+                            )
 
                         # Check if URL changed (indicates page navigation)
                         new_dom = await self._dom_service.get_state()
@@ -309,6 +336,7 @@ class Agent:
                             and new_dom.url != dom_state.url
                         ):
                             page_changed = True
+                            logger.debug(f"Page changed: {dom_state.url} → {new_dom.url}")
                     except Exception as e:
                         logger.debug(f"Smart wait failed: {e}")
             else:
@@ -490,6 +518,54 @@ class Agent:
             return True
 
         return False
+
+    def _subscribe_to_events(self) -> None:
+        """Subscribe to watchdog events."""
+        from heimdall.events.types import (
+            DOMChangedEvent,
+            ErrorEvent,
+            NavigationCompletedEvent,
+            NetworkIdleEvent,
+        )
+
+        self._bus.on(NavigationCompletedEvent, self._on_navigation_completed)
+        self._bus.on(NetworkIdleEvent, self._on_network_idle)
+        self._bus.on(DOMChangedEvent, self._on_dom_changed)
+        self._bus.on(ErrorEvent, self._on_error)
+
+        logger.debug("Subscribed to watchdog events")
+
+    def _unsubscribe_from_events(self) -> None:
+        """Unsubscribe from watchdog events."""
+        from heimdall.events.types import (
+            DOMChangedEvent,
+            ErrorEvent,
+            NavigationCompletedEvent,
+            NetworkIdleEvent,
+        )
+
+        self._bus.off(NavigationCompletedEvent, self._on_navigation_completed)
+        self._bus.off(NetworkIdleEvent, self._on_network_idle)
+        self._bus.off(DOMChangedEvent, self._on_dom_changed)
+        self._bus.off(ErrorEvent, self._on_error)
+
+        logger.debug("Unsubscribed from watchdog events")
+
+    async def _on_navigation_completed(self, event: Any) -> None:
+        """Handle navigation completed event."""
+        logger.info(f"Navigation completed: {event.url}")
+
+    async def _on_network_idle(self, event: Any) -> None:
+        """Handle network idle event."""
+        logger.debug("Network idle detected")
+
+    async def _on_dom_changed(self, event: Any) -> None:
+        """Handle DOM changed event."""
+        logger.debug(f"DOM changed: +{event.added_nodes} -{event.removed_nodes} nodes")
+
+    async def _on_error(self, event: Any) -> None:
+        """Handle error event."""
+        logger.warning(f"Browser error: {event.error_type} - {event.message}")
 
 
 class MessageBuilder:
