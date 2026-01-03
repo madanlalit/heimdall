@@ -1,6 +1,11 @@
+<div align="center">
+
+<img src="assets/logo.png" alt="Heimdall Logo" width="120" height="120">
+
 # Heimdall
 
 > Browser automation agent that executes natural language tasks and collects context for automation script generation.
+</div>
 
 ## Installation
 
