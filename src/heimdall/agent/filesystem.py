@@ -9,8 +9,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = "heimdall_agent_data"
-
 
 class FileSystem:
     """Simple file system for agent data persistence."""
@@ -20,14 +18,17 @@ class FileSystem:
         Initialize file system.
 
         Args:
-            base_dir: Base directory for agent data. Defaults to current directory.
+            base_dir: Optional override for data directory.
+                      If None, uses a hidden .heimdall directory in current working directory.
         """
-        if base_dir is None:
-            base_dir = Path.cwd()
+        if base_dir:
+            self.data_dir = Path(base_dir)
+        else:
+            # Use hidden .heimdall directory in the project root
+            self.data_dir = Path.cwd() / ".heimdall"
 
-        self.base_dir = Path(base_dir)
-        self.data_dir = self.base_dir / DEFAULT_DATA_DIR
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Using data directory: {self.data_dir}")
 
         # Initialize default files
         self._init_todo()

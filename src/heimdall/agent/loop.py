@@ -405,20 +405,9 @@ class Agent:
 
         # Try to parse JSON from content
         try:
-            # Handle markdown code blocks
-            if "```json" in content:
-                start = content.find("```json") + 7
-                end = content.find("```", start)
-                content = content[start:end].strip()
-            elif "```" in content:
-                start = content.find("```") + 3
-                end = content.find("```", start)
-                content = content[start:end].strip()
+            from heimdall.utils.text import extract_json_from_markdown
 
-            # Handle case where LLM outputs "json" or "json\n{" at the start
-            content = content.strip()
-            if content.startswith("json"):
-                content = content[4:].strip()
+            content = extract_json_from_markdown(content)
 
             data = json.loads(content)
 

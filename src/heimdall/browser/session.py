@@ -523,6 +523,8 @@ class BrowserSession(BaseModel):
             paths = [
                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
             ]
         elif system == "Linux":
             paths = [

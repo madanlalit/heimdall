@@ -57,3 +57,14 @@ screenshots/
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent data directories
+heimdall_agent_data/
+.heimdall/
+
+# Development files
+instructions.txt
+github_issues.json
+
+# Third-party/external repositories
+browser-use/
