@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="Heimdall" width="110" height="110">
+<img src="assets/logo.png" alt="Heimdall" width="160" height="160">
 
-<h1 style="margin-top: 0.5rem;">Heimdall</h1>
+<h1 style="margin-top: 0.3rem;">Heimdall</h1>
 
 <p><strong>Browser automation through natural language</strong></p>
 
