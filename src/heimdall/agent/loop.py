@@ -366,6 +366,7 @@ class Agent:
         step_end_time = time.time()
         history_item = AgentHistory(
             step_number=step_number,
+            model_input=messages,
             model_output=agent_output,
             results=results,
             state=BrowserStateSnapshot(

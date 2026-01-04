@@ -125,6 +125,7 @@ class AgentHistory(BaseModel):
     """History item for each agent step."""
 
     step_number: int
+    model_input: list[dict[str, Any]] | None = None
     model_output: AgentOutput | None = None
     results: list[ActionResult] = Field(default_factory=list)
     state: BrowserStateSnapshot = Field(default_factory=BrowserStateSnapshot)
@@ -175,6 +176,7 @@ class AgentHistory(BaseModel):
         """Convert to dictionary for serialization."""
         return {
             "step_number": self.step_number,
+            "model_input": self.model_input,
             "model_output": self.model_output.model_dump() if self.model_output else None,
             "results": [r.model_dump() for r in self.results],
             "state": self.state.to_dict(),
