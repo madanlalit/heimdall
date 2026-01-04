@@ -39,6 +39,10 @@ class NetworkWatchdog(BaseWatchdog):
         self._was_idle = True
         self._registered = False
 
+        # Track failed requests
+        self._failed_requests: list[dict] = []
+        self._request_url_map: dict[str, str] = {}  # Map requestId -> URL
+
     async def _initialize(self) -> None:
         """Register CDP event handlers for network tracking."""
         if self._registered:
@@ -58,7 +62,7 @@ class NetworkWatchdog(BaseWatchdog):
                 session_id=session_id,
             )
             await client.register.Network.loadingFailed(
-                self._on_request_finished,
+                self._on_request_failed,
                 session_id=session_id,
             )
 
@@ -79,6 +83,7 @@ class NetworkWatchdog(BaseWatchdog):
             return
 
         self._pending_requests.add(request_id)
+        self._request_url_map[request_id] = url
         self._last_activity_time = asyncio.get_event_loop().time()
         self._was_idle = False
 
@@ -87,14 +92,45 @@ class NetworkWatchdog(BaseWatchdog):
         )
 
     async def _on_request_finished(self, params: dict) -> None:
-        """Handle request finished or failed."""
+        """Handle request finished."""
         request_id = params.get("requestId", "")
         self._pending_requests.discard(request_id)
+        # Keep URL in map for a bit or clear it? Better to clear to save memory,
+        # but what if failure comes after finish (unlikely)?
+        # Failure usually comes INSTEAD of finish.
+        self._request_url_map.pop(request_id, None)
+
         self._last_activity_time = asyncio.get_event_loop().time()
 
         logger.debug(
             f"Request finished: {request_id[:8]}... ({len(self._pending_requests)} pending)"
         )
+
+    async def _on_request_failed(self, params: dict) -> None:
+        """Handle request failed."""
+        request_id = params.get("requestId", "")
+        error_text = params.get("errorText", "Unknown error")
+        timestamp = params.get("timestamp", 0)
+
+        url = self._request_url_map.get(request_id, "unknown")
+
+        # Ignore cancelled requests (often just navigation)
+        if error_text == "net::ERR_ABORTED":
+            # Still remove from pending
+            self._pending_requests.discard(request_id)
+            self._request_url_map.pop(request_id, None)
+            return
+
+        failure_info = {"url": url, "error": error_text, "timestamp": timestamp}
+        self._failed_requests.append(failure_info)
+
+        # Cleanup
+        self._pending_requests.discard(request_id)
+        self._request_url_map.pop(request_id, None)
+
+        self._last_activity_time = asyncio.get_event_loop().time()
+
+        logger.warning(f"Request failed: {url} - {error_text}")
 
     async def _check(self) -> None:
         """Check for network idle state."""
@@ -147,3 +183,12 @@ class NetworkWatchdog(BaseWatchdog):
 
         logger.warning(f"Network idle timeout ({self.pending_count} pending)")
         return False
+
+    @property
+    def failed_requests(self) -> list[dict]:
+        """Get list of failed requests."""
+        return list(self._failed_requests)
+
+    def clear_failed_requests(self) -> None:
+        """Clear failed requests list."""
+        self._failed_requests.clear()

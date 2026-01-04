@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 class AgentConfig(BaseModel):
     """Agent configuration."""
 
-    max_steps: int = 50
+    max_steps: int = 100
     max_retries: int = 3
     max_consecutive_failures: int = 5
     step_timeout: float = 60.0
@@ -86,6 +86,7 @@ class AgentState(BaseModel):
     # Failure tracking
     consecutive_failures: int = 0
     total_failures: int = 0
+    previous_url: str | None = None
 
 
 class Agent:
@@ -226,13 +227,23 @@ class Agent:
             except Exception as e:
                 logger.debug(f"Screenshot capture failed: {e}")
 
+        # 2b. Track URL changes
+        current_url = getattr(dom_state, "url", "unknown")
+
         # 3. Build messages with structured history
+        # Collect errors from watchdogs
+        js_errors = self._watchdogs["error"].js_errors  # type: ignore
+        failed_requests = self._watchdogs["network"].failed_requests  # type: ignore
+
         messages = self._message_builder.build(
             task=task,
             dom_state=dom_state,
             history=self._history,
             step_info=(step_number, self._config.max_steps),
             screenshot_b64=screenshot_b64,
+            errors=js_errors,
+            network_failures=failed_requests,
+            previous_url=self._state.previous_url,
         )
 
         # 4. Get LLM response
@@ -242,6 +253,13 @@ class Agent:
             logger.error(f"LLM call failed: {e}")
             self._state.consecutive_failures += 1
             return
+
+        # Update previous URL for next step
+        self._state.previous_url = current_url
+
+        # Clear errors after sending to LLM (so they don't persist)
+        self._watchdogs["error"].clear_errors()  # type: ignore
+        self._watchdogs["network"].clear_failed_requests()  # type: ignore
 
         # 5. Parse structured output
         agent_output = self._parse_agent_output(response)
@@ -571,6 +589,9 @@ class MessageBuilder:
         history: AgentHistoryList | None = None,
         step_info: tuple[int, int] | None = None,
         screenshot_b64: str | None = None,
+        errors: list[dict] | None = None,
+        network_failures: list[dict] | None = None,
+        previous_url: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build messages for LLM with structured history."""
         messages: list[dict[str, Any]] = []
@@ -610,14 +631,48 @@ class MessageBuilder:
         )
         url = dom_state.url if hasattr(dom_state, "url") else "unknown"
 
+        # Scroll info
+        scroll_str = ""
+        if hasattr(dom_state, "scroll_info") and dom_state.scroll_info:
+            info = dom_state.scroll_info
+            scroll_str = f"Scroll: {info.get('x', 0)}, {info.get('y', 0)} (Viewport: {info.get('width', 0)}x{info.get('height', 0)})"
+
         user_content += f"""<browser_state>
 URL: {url}
+Previous URL: {previous_url or "unknown"}
 Elements: {element_count}
+{scroll_str}
 
 Interactive elements:
 {dom_text}
-</browser_state>
-"""
+</browser_state>\n\n"""
+
+        # Errors
+        if errors:
+            error_lines = []
+            for err in errors:
+                if err.get("type") == "exception":
+                    error_lines.append(
+                        f"- [JS] {err.get('message')} at {err.get('url')}:{err.get('line')}"
+                    )
+                else:
+                    error_lines.append(f"- [Console] {err.get('message')}")
+
+            if error_lines:
+                user_content += (
+                    "<browser_errors>\n" + "\n".join(error_lines) + "\n</browser_errors>\n\n"
+                )
+
+        # Network Failures
+        if network_failures:
+            fail_lines = []
+            for fail in network_failures:
+                fail_lines.append(f"- [Failed] {fail.get('url')} ({fail.get('error')})")
+
+            if fail_lines:
+                user_content += (
+                    "<network_activity>\n" + "\n".join(fail_lines) + "\n</network_activity>\n\n"
+                )
 
         # Build user message content (with optional vision)
         if screenshot_b64:

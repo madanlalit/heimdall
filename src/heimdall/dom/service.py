@@ -50,7 +50,21 @@ class DomService:
         tree = self._build_tree(snapshot, ax_tree, layout)
 
         # Serialize for LLM
-        return self._serializer.serialize(tree, self._selector_generator)
+        serialized = self._serializer.serialize(tree, self._selector_generator)
+
+        # Add scroll/viewport info
+        # getLayoutMetrics returns layoutViewport: {pageX, pageY, clientWidth, clientHeight}
+        # and visualViewport: {offsetX, offsetY, pageX, pageY, clientWidth, clientHeight, scale, zoom}
+        if layout:
+            viewport = layout.get("visualViewport", {}) or layout.get("layoutViewport", {})
+            serialized.scroll_info = {
+                "x": viewport.get("pageX", 0),
+                "y": viewport.get("pageY", 0),
+                "width": viewport.get("clientWidth", 0),
+                "height": viewport.get("clientHeight", 0),
+            }
+
+        return serialized
 
     async def _get_snapshot(self) -> dict:
         """Capture DOM snapshot with styles."""
@@ -365,6 +379,7 @@ class DOMSerializer:
             text="\n".join(lines),
             selector_map=selector_map,
             element_count=len(interactive_nodes),
+            scroll_info={},  # Placeholder, will be populated by service
         )
 
     def _describe_node(self, node: DOMNode) -> str:
@@ -406,3 +421,4 @@ class SerializedDOM(BaseModel):
     text: str = ""
     selector_map: dict[int, dict] = Field(default_factory=dict)
     element_count: int = 0
+    scroll_info: dict[str, float] = Field(default_factory=dict)
