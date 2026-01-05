@@ -12,6 +12,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import base64
+from heimdall.utils.media import save_screenshot_async
 
 from pydantic import BaseModel, Field
 
@@ -210,27 +212,18 @@ class Agent:
         # 2. Optional: capture screenshot for vision or tracing
         screenshot_b64 = None
         screenshot_path = None
+
+        # Only capture if needed for vision OR if user explicitly requested screenshots
         if self._config.use_vision or self._config.capture_screenshots:
             try:
-                import base64
-
-                from heimdall.utils.media import save_screenshot_async
-
                 screenshot_data = await self._session.screenshot()
                 screenshot_b64 = base64.b64encode(screenshot_data).decode()
 
-                # Determine save directory
-                save_dir = None
                 if self._config.save_trace_path:
                     save_dir = Path(self._config.save_trace_path).parent / "screenshots"
-                elif self._config.use_vision:
-                    # Fallback for vision usage without trace path
-                    save_dir = Path("output/screenshots")
-
-                # Save if we determined a directory (tracing or vision)
-                if save_dir:
                     screenshot_path = str(save_dir / f"step_{step_number}.png")
-                    # Non-blocking save to avoid performance hit
+
+                    # Non-blocking save
                     asyncio.create_task(save_screenshot_async(screenshot_data, screenshot_path))
 
             except Exception as e:
