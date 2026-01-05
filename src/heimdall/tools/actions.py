@@ -187,10 +187,25 @@ async def navigate(
 
 @action("Go back to previous page")
 async def go_back(session: "BrowserSession") -> ActionResult:
-    """Go back in browser history."""
+    """Go back in browser history using CDP."""
     try:
-        await session.execute_js("window.history.back()")
-        await asyncio.sleep(0.5)
+        # Get navigation history
+        result = await session.cdp_client.send.Page.getNavigationHistory(
+            session_id=session.session_id,
+        )
+        current_index = result.get("currentIndex", 0)
+        entries = result.get("entries", [])
+
+        if current_index <= 0:
+            return ActionResult.fail("Cannot go back: already at first page")
+
+        # Navigate to previous entry
+        prev_entry = entries[current_index - 1]
+        await session.cdp_client.send.Page.navigateToHistoryEntry(
+            {"entryId": prev_entry["id"]},
+            session_id=session.session_id,
+        )
+        await session.wait_for_stable()
 
         return ActionResult.ok("Went back")
     except Exception as e:
@@ -199,10 +214,13 @@ async def go_back(session: "BrowserSession") -> ActionResult:
 
 @action("Refresh/reload the current page")
 async def refresh_page(session: "BrowserSession") -> ActionResult:
-    """Refresh the current page to get fresh content."""
+    """Refresh the current page to get fresh content using CDP."""
     try:
-        await session.execute_js("window.location.reload()")
-        await asyncio.sleep(1.0)
+        await session.cdp_client.send.Page.reload(
+            {},
+            session_id=session.session_id,
+        )
+        await session.wait_for_stable()
 
         return ActionResult.ok("Page refreshed")
     except Exception as e:
@@ -216,24 +234,54 @@ async def scroll(
     amount: int = 500,
 ) -> ActionResult:
     """
-    Scroll the page.
+    Scroll the page using CDP for reliable native scrolling.
 
     Args:
         direction: 'up', 'down', 'left', 'right'
         amount: Scroll amount in pixels
     """
-    scroll_code = {
-        "up": f"window.scrollBy(0, -{amount})",
-        "down": f"window.scrollBy(0, {amount})",
-        "left": f"window.scrollBy(-{amount}, 0)",
-        "right": f"window.scrollBy({amount}, 0)",
-    }
-
-    if direction not in scroll_code:
+    if direction not in ("up", "down", "left", "right"):
         return ActionResult.fail(f"Invalid direction: {direction}")
 
     try:
-        await session.execute_js(scroll_code[direction])
+        # Get viewport dimensions for centering the scroll gesture
+        layout_metrics = await session.cdp_client.send.Page.getLayoutMetrics(
+            session_id=session.session_id,
+        )
+        viewport_width = layout_metrics["layoutViewport"]["clientWidth"]
+        viewport_height = layout_metrics["layoutViewport"]["clientHeight"]
+
+        # Calculate center of viewport
+        center_x = viewport_width / 2
+        center_y = viewport_height / 2
+
+        # For CDP scroll gesture: positive distance scrolls in that direction
+        # yDistance: positive = scroll UP (content moves down), negative = scroll DOWN
+        # xDistance: positive = scroll LEFT, negative = scroll RIGHT
+        x_distance = 0
+        y_distance = 0
+
+        if direction == "up":
+            y_distance = amount
+        elif direction == "down":
+            y_distance = -amount
+        elif direction == "left":
+            x_distance = amount
+        elif direction == "right":
+            x_distance = -amount
+
+        # Synthesize scroll gesture using CDP
+        await session.cdp_client.send.Input.synthesizeScrollGesture(
+            {
+                "x": center_x,
+                "y": center_y,
+                "xDistance": x_distance,
+                "yDistance": y_distance,
+                "speed": 50000,  # pixels per second (high = near-instant scroll)
+            },
+            session_id=session.session_id,
+        )
+
         return ActionResult.ok(f"Scrolled {direction} by {amount}px")
     except Exception as e:
         return ActionResult.fail(f"Scroll failed: {e}")
@@ -511,10 +559,26 @@ async def focus(
 
 @action("Go forward in browser history")
 async def go_forward(session: "BrowserSession") -> ActionResult:
-    """Go forward in browser history."""
+    """Go forward in browser history using CDP."""
     try:
-        await session.execute_js("window.history.forward()")
-        await asyncio.sleep(0.5)
+        # Get navigation history
+        result = await session.cdp_client.send.Page.getNavigationHistory(
+            session_id=session.session_id,
+        )
+        current_index = result.get("currentIndex", 0)
+        entries = result.get("entries", [])
+
+        if current_index >= len(entries) - 1:
+            return ActionResult.fail("Cannot go forward: already at last page")
+
+        # Navigate to next entry
+        next_entry = entries[current_index + 1]
+        await session.cdp_client.send.Page.navigateToHistoryEntry(
+            {"entryId": next_entry["id"]},
+            session_id=session.session_id,
+        )
+        await session.wait_for_stable()
+
         return ActionResult.ok("Went forward")
     except Exception as e:
         return ActionResult.fail(f"Go forward failed: {e}")

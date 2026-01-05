@@ -94,8 +94,15 @@ You can specify up to 3 actions per step. Available actions:
 - scroll: Scroll page - {"scroll": {"direction": "up|down"}}
 - wait: Wait for changes - {"wait": {"seconds": N}}
 - press_key: Press keyboard key - {"press_key": {"key": "Enter|Tab|Escape"}}
-- ask_human: Ask human for help - {"ask_human": {"question": "I need help with..."}}
+- ask_human: Ask human for help - {"ask_human": {"question": "..."}}
 - done: Complete task - {"done": {"message": "...", "success": true|false}}
+- go_back: Go back in browser history - {"go_back": {}}
+- go_forward: Go forward in browser history - {"go_forward": {}}
+- refresh_page: Refresh/reload the current page - {"refresh_page": {}}
+- hover: Hover over element - {"hover": {"index": N}}
+- focus: Focus on element - {"focus": {"index": N}}
+- search: Search the web using Google - {"search": {"query": "..."}}
+- select_option: Select dropdown option - {"select_option": {"index": N, "value": "..."}}
 
 Actions are executed sequentially. If the page changes, remaining actions may be skipped.
 </action_rules>

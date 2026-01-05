@@ -69,9 +69,23 @@ class Element:
 
         Strategies: DOM.getContentQuads -> DOM.getBoxModel
         -> JS getBoundingClientRect -> JS .click()
+
+        Includes pre-click verification:
+        - Pointer events check
+        - Hit target verification
         """
         client = self._session.cdp_client
         session_id = self._session.session_id
+
+        # Check pointer-events first
+        pointer_events_ok = await self._check_pointer_events()
+        if not pointer_events_ok:
+            logger.warning(
+                f"Element {self._backend_node_id} has pointer-events: none, "
+                "falling back to JS click"
+            )
+            await self._js_click()
+            return
 
         # Get viewport dimensions for visibility checks
         try:
@@ -161,6 +175,28 @@ class Element:
         except Exception:
             # Fallback to JS scrollIntoView
             await self.scroll_into_view()
+
+        # Re-calculate click point after scroll (element may have moved)
+        try:
+            result = await client.send.DOM.getContentQuads(
+                {"backendNodeId": self._backend_node_id},
+                session_id=session_id,
+            )
+            if result.get("quads"):
+                quads = result["quads"]
+                best_x, best_y = self._find_best_click_point(quads, viewport_width, viewport_height)
+        except Exception:
+            pass  # Use previous coordinates
+
+        # Verify hit target - check if our element will receive the click
+        hit_target_ok, interceptor = await self._verify_hit_target(best_x, best_y)
+        if not hit_target_ok:
+            logger.warning(
+                f"Click at ({best_x}, {best_y}) would hit '{interceptor}' "
+                f"instead of element {self._backend_node_id}, using JS click"
+            )
+            await self._js_click()
+            return
 
         # Calculate modifier flags
         modifier_flags = self._calculate_modifier_flags(modifiers)
@@ -320,6 +356,109 @@ class Element:
         )
         await asyncio.sleep(0.05)
         logger.debug(f"JS clicked element {self._backend_node_id}")
+
+    async def _check_pointer_events(self) -> bool:
+        """
+        Check if element has clickable pointer-events style.
+
+        Returns:
+            True if pointer-events allows clicking, False if 'none'
+        """
+        client = self._session.cdp_client
+        session_id = self._session.session_id
+
+        try:
+            result = await client.send.DOM.resolveNode(
+                {"backendNodeId": self._backend_node_id},
+                session_id=session_id,
+            )
+            object_id = result.get("object", {}).get("objectId")
+            if not object_id:
+                return True  # Assume clickable if can't resolve
+
+            style_result = await client.send.Runtime.callFunctionOn(
+                {
+                    "objectId": object_id,
+                    "functionDeclaration": """
+                        function() {
+                            const style = window.getComputedStyle(this);
+                            return style.pointerEvents;
+                        }
+                    """,
+                    "returnByValue": True,
+                },
+                session_id=session_id,
+            )
+            pointer_events = style_result.get("result", {}).get("value", "auto")
+            return pointer_events != "none"
+        except Exception as e:
+            logger.debug(f"pointer-events check failed: {e}")
+            return True  # Assume clickable on error
+
+    async def _verify_hit_target(self, x: int, y: int) -> tuple[bool, str]:
+        """
+        Verify that elementFromPoint at (x, y) returns this element or a child.
+
+        Args:
+            x: X coordinate to check
+            y: Y coordinate to check
+
+        Returns:
+            Tuple of (is_target_ok, interceptor_description)
+            - is_target_ok: True if this element will receive the click
+            - interceptor_description: Description of what would intercept, or empty string
+        """
+        client = self._session.cdp_client
+        session_id = self._session.session_id
+
+        try:
+            result = await client.send.DOM.resolveNode(
+                {"backendNodeId": self._backend_node_id},
+                session_id=session_id,
+            )
+            object_id = result.get("object", {}).get("objectId")
+            if not object_id:
+                return True, ""  # Can't verify, assume OK
+
+            # Check if element at point is this element or a descendant
+            check_result = await client.send.Runtime.callFunctionOn(
+                {
+                    "objectId": object_id,
+                    "functionDeclaration": f"""
+                        function() {{
+                            const hitElement = document.elementFromPoint({x}, {y});
+                            if (!hitElement) {{
+                                return {{ ok: false, interceptor: 'no element at point' }};
+                            }}
+                            // Check if hit element is this element or a descendant
+                            if (this === hitElement || this.contains(hitElement)) {{
+                                return {{ ok: true, interceptor: '' }};
+                            }}
+                            // Check if this element is a descendant of hit element
+                            // (click would still work in some cases)
+                            if (hitElement.contains(this)) {{
+                                return {{ ok: true, interceptor: '' }};
+                            }}
+                            // Something else is at the point
+                            const tag = hitElement.tagName.toLowerCase();
+                            const id = hitElement.id ? '#' + hitElement.id : '';
+                            const cls = hitElement.className ? 
+                                '.' + hitElement.className.split(' ')[0] : '';
+                            return {{ 
+                                ok: false, 
+                                interceptor: tag + id + cls 
+                            }};
+                        }}
+                    """,
+                    "returnByValue": True,
+                },
+                session_id=session_id,
+            )
+            value = check_result.get("result", {}).get("value", {})
+            return value.get("ok", True), value.get("interceptor", "")
+        except Exception as e:
+            logger.debug(f"hit target verification failed: {e}")
+            return True, ""  # Assume OK on error
 
     async def fill(self, text: str, clear: bool = True) -> None:
         """
@@ -701,7 +840,12 @@ class Element:
                 raise RuntimeError(f"Could not focus element {self._backend_node_id}") from None
 
     async def scroll_into_view(self) -> None:
-        """Scroll element into view."""
+        """
+        Scroll element into view with container-aware scrolling.
+
+        First scrolls any scrollable parent containers, then scrolls
+        the element into the viewport.
+        """
         client = self._session.cdp_client
         session_id = self._session.session_id
 
@@ -713,16 +857,50 @@ class Element:
         object_id = result.get("object", {}).get("objectId")
 
         if object_id:
+            # Smart scroll: find scrollable container and scroll it first
             await client.send.Runtime.callFunctionOn(
                 {
                     "objectId": object_id,
                     "functionDeclaration": """
                         function() {
-                            this.scrollIntoView({
-                                behavior: 'instant',
-                                block: 'center',
-                                inline: 'center'
-                            });
+                            // Find scrollable parent container
+                            function getScrollableParent(el) {
+                                if (!el || el === document.body) return null;
+                                const parent = el.parentElement;
+                                if (!parent) return null;
+                                
+                                const style = window.getComputedStyle(parent);
+                                const overflowY = style.overflowY;
+                                const overflowX = style.overflowX;
+                                
+                                // Check if parent is scrollable
+                                const isScrollable = (
+                                    (overflowY === 'auto' || overflowY === 'scroll' ||
+                                     overflowX === 'auto' || overflowX === 'scroll') &&
+                                    (parent.scrollHeight > parent.clientHeight ||
+                                     parent.scrollWidth > parent.clientWidth)
+                                );
+                                
+                                if (isScrollable) return parent;
+                                return getScrollableParent(parent);
+                            }
+                            
+                            // Scroll container first if found
+                            const container = getScrollableParent(this);
+                            if (container) {
+                                this.scrollIntoView({
+                                    behavior: 'instant',
+                                    block: 'center',
+                                    inline: 'center'
+                                });
+                            } else {
+                                // No scrollable container, scroll normally
+                                this.scrollIntoView({
+                                    behavior: 'instant',
+                                    block: 'center',
+                                    inline: 'center'
+                                });
+                            }
                         }
                     """,
                     "returnByValue": True,
