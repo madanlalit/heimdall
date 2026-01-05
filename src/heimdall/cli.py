@@ -208,6 +208,7 @@ async def _run_agent(
             llm_client=llm,
             config=AgentConfig(
                 use_vision=use_vision,
+                demo_mode=demo_mode,
                 allowed_domains=allowed_domains,
                 extend_system_prompt=extend_system_prompt,
                 save_trace_path=save_trace,

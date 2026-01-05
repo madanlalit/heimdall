@@ -53,6 +53,9 @@ class AgentConfig(BaseModel):
     # Vision: send screenshots to LLM
     use_vision: bool = False
 
+    # Demo mode: visual feedback during execution
+    demo_mode: bool = False
+
     # Stateful reasoning options
     use_thinking: bool = True
     flash_mode: bool = False
@@ -120,6 +123,14 @@ class Agent:
         self._message_builder = MessageBuilder(
             extend_system_prompt=self._config.extend_system_prompt
         )
+
+        # Initialize demo mode if enabled
+        self._demo_mode = None
+        if self._config.demo_mode:
+            from heimdall.browser.demo import DemoMode
+
+            self._demo_mode = DemoMode(self._session)
+            logger.info("Demo mode enabled - visual feedback active")
 
         # Initialize watchdogs
         self._watchdogs = {
@@ -276,6 +287,10 @@ class Agent:
             action_args = action_dict[action_name] or {}
 
             logger.info(f"Tool call: {action_name}({json.dumps(action_args)[:50]}...)")
+
+            # Demo mode: show visual feedback before action
+            if self._demo_mode:
+                await self._show_demo_feedback(action_name, action_args, dom_state)
 
             exec_result = await self._registry.execute(action_name, action_args)
 
@@ -547,6 +562,54 @@ class Agent:
     async def _on_error(self, event: Any) -> None:
         """Handle error event."""
         logger.warning(f"Browser error: {event.error_type} - {event.message}")
+
+    async def _show_demo_feedback(
+        self, action_name: str, action_args: dict, dom_state: Any
+    ) -> None:
+        """
+        Show visual feedback for demo mode before executing an action.
+
+        Args:
+            action_name: Name of the action being performed
+            action_args: Arguments for the action
+            dom_state: Current DOM state (passed to avoid race conditions)
+
+        Displays:
+        - Tooltip with action name and target description
+        - Element highlight using CDP for accurate targeting
+        """
+        if not self._demo_mode:
+            return
+
+        try:
+            # Build description from action args
+            description = ""
+            if "index" in action_args:
+                description = f"element [{action_args['index']}]"
+            elif "url" in action_args:
+                description = action_args["url"][:50]
+            elif "text" in action_args:
+                description = f'"{action_args["text"][:30]}..."'
+
+            # Show action tooltip
+            await self._demo_mode.show_action(action_name, description)
+
+            # Highlight target element using CDP for accurate visual feedback
+            if action_name in ("click", "type_text", "hover") and "index" in action_args:
+                index = action_args["index"]
+                # Use passed dom_state to avoid race condition
+                element_info = dom_state.selector_map.get(index)
+
+                if element_info and "backend_node_id" in element_info:
+                    await self._demo_mode.highlight_element_cdp(
+                        element_info["backend_node_id"],
+                        duration=1.0,
+                    )
+                    # Small delay for visibility
+                    await asyncio.sleep(0.5)
+
+        except Exception as e:
+            logger.debug(f"Demo feedback failed: {e}")
 
 
 class MessageBuilder:
