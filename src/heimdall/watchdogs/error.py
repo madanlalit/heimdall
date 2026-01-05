@@ -55,11 +55,13 @@ class ErrorWatchdog(BaseWatchdog):
             # Register console error handler
             client.register.Runtime.exceptionThrown(
                 self._on_exception,
+                session_id=session_id,
             )
 
             # Register console message handler for errors
             client.register.Runtime.consoleAPICalled(
                 self._on_console,
+                session_id=session_id,
             )
 
             self._registered = True

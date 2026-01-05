@@ -211,7 +211,11 @@ class Agent:
                     from heimdall.collector import Exporter
 
                     exporter = Exporter(Path(self._config.save_trace_path).parent)
-                    exporter.export_steps(self._collector.export()["steps"], "collector_steps.json")
+                    await asyncio.to_thread(
+                        exporter.export_steps,
+                        self._collector.export()["steps"],
+                        "collector_steps.json",
+                    )
                     logger.info("Collector steps exported")
                 except Exception as e:
                     logger.error(f"Failed to export collector data: {e}")
@@ -405,7 +409,11 @@ class Agent:
                 from heimdall.collector import Exporter
 
                 exporter = Exporter(Path(self._config.save_trace_path).parent)
-                exporter.export_steps(self._collector.export()["steps"], "collector_steps.json")
+                await asyncio.to_thread(
+                    exporter.export_steps,
+                    self._collector.export()["steps"],
+                    "collector_steps.json",
+                )
                 logger.debug("Collector steps exported (incremental)")
             except Exception as e:
                 logger.warning(f"Failed to export collector data: {e}")

@@ -54,15 +54,19 @@ class NetworkWatchdog(BaseWatchdog):
             # Register network event handlers
             client.register.Network.requestWillBeSent(
                 self._on_request_started,
+                session_id=session_id,
             )
             client.register.Network.responseReceived(
                 self._on_response_received,
+                session_id=session_id,
             )
             client.register.Network.loadingFinished(
                 self._on_request_finished,
+                session_id=session_id,
             )
             client.register.Network.loadingFailed(
                 self._on_request_failed,
+                session_id=session_id,
             )
 
             self._registered = True
