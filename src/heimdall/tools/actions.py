@@ -17,6 +17,80 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Retry configuration
+DEFAULT_MAX_RETRIES = 2
+DEFAULT_RETRY_DELAY = 0.5  # seconds
+
+
+async def with_retry(
+    action_fn,
+    *args,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    delay: float = DEFAULT_RETRY_DELAY,
+    element_context: str = "",
+    **kwargs,
+) -> ActionResult:
+    """
+    Execute an action with automatic retry on failure.
+
+    Uses exponential backoff between retries.
+
+    Args:
+        action_fn: The async action function to execute
+        max_retries: Maximum retry attempts (default: 2)
+        delay: Initial delay between retries (default: 0.5s)
+        element_context: Element description for error messages
+
+    Returns:
+        ActionResult from the action
+    """
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            result = await action_fn(*args, **kwargs)
+
+            # If action returned success, or it's a known permanent failure, return
+            if result.success:
+                return result
+
+            # Check if the error is retryable
+            error_msg = result.error or ""
+            retryable_errors = [
+                "not visible",
+                "failed to resolve",
+                "no geometry found",
+                "timed out",
+            ]
+
+            if not any(err in error_msg.lower() for err in retryable_errors):
+                # Not a retryable error, return immediately
+                return result
+
+            last_error = result.error
+
+        except Exception as e:
+            last_error = str(e)
+
+        # Wait before retry with exponential backoff
+        if attempt < max_retries:
+            wait_time = delay * (2**attempt)
+            logger.debug(
+                f"Retry {attempt + 1}/{max_retries} for {element_context} "
+                f"after {wait_time:.1f}s (error: {last_error})"
+            )
+            await asyncio.sleep(wait_time)
+
+    # All retries exhausted
+    error_detail = f"Failed after {max_retries + 1} attempts"
+    if element_context:
+        error_detail += f" on {element_context}"
+    if last_error:
+        error_detail += f": {last_error}"
+
+    return ActionResult.fail(error_detail)
+
+
 @action("Click element by index from the DOM list")
 async def click(
     index: int,
@@ -34,17 +108,21 @@ async def click(
 
     element = Element(session, backend_node_id)
 
-    try:
-        await element.scroll_into_view()
-        await asyncio.sleep(0.1)
-        await element.click()
+    async def _do_click():
+        try:
+            # element.click() handles scrolling internally
+            await element.click()
+            return ActionResult.ok(
+                f"Clicked element {index}",
+                element=element_info,
+            )
+        except Exception as e:
+            return ActionResult.fail(f"Click failed: {e}")
 
-        return ActionResult.ok(
-            f"Clicked element {index}",
-            element=element_info,
-        )
-    except Exception as e:
-        return ActionResult.fail(f"Click failed: {e}")
+    return await with_retry(
+        _do_click,
+        element_context=f"element {index} ({element_info.get('tag', 'unknown')})",
+    )
 
 
 @action("Type text into element by index")
@@ -66,17 +144,23 @@ async def type_text(
 
     element = Element(session, backend_node_id)
 
-    try:
-        await element.scroll_into_view()
-        await element.fill(text, clear=clear)
+    async def _do_type():
+        try:
+            # element.fill() handles scrolling internally
+            await element.fill(text, clear=clear)
 
-        return ActionResult.ok(
-            f"Typed '{text[:20]}{'...' if len(text) > 20 else ''}' into element {index}",
-            element=element_info,
-            text=text,
-        )
-    except Exception as e:
-        return ActionResult.fail(f"Type failed: {e}")
+            return ActionResult.ok(
+                f"Typed '{text[:20]}{'...' if len(text) > 20 else ''}' into element {index}",
+                element=element_info,
+                text=text,
+            )
+        except Exception as e:
+            return ActionResult.fail(f"Type failed: {e}")
+
+    return await with_retry(
+        _do_type,
+        element_context=f"element {index} ({element_info.get('tag', 'unknown')})",
+    )
 
 
 @action("Navigate to a URL")
@@ -239,13 +323,19 @@ async def hover(
 
     element = Element(session, backend_node_id)
 
-    try:
-        await element.scroll_into_view()
-        await element.hover()
+    async def _do_hover():
+        try:
+            # Scroll into view first since hover() doesn't scroll internally
+            await element.scroll_into_view()
+            await element.hover()
+            return ActionResult.ok(f"Hovered element {index}")
+        except Exception as e:
+            return ActionResult.fail(f"Hover failed: {e}")
 
-        return ActionResult.ok(f"Hovered element {index}")
-    except Exception as e:
-        return ActionResult.fail(f"Hover failed: {e}")
+    return await with_retry(
+        _do_hover,
+        element_context=f"element {index} ({element_info.get('tag', 'unknown')})",
+    )
 
 
 @action("Press a keyboard key")

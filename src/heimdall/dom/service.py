@@ -53,8 +53,7 @@ class DomService:
         serialized = self._serializer.serialize(tree, self._selector_generator)
 
         # Add scroll/viewport info
-        # getLayoutMetrics returns layoutViewport: {pageX, pageY, clientWidth, clientHeight}
-        # and visualViewport: {offsetX, offsetY, pageX, pageY, clientWidth, clientHeight, scale, zoom}
+        # getLayoutMetrics returns layoutViewport and visualViewport
         if layout:
             viewport = layout.get("visualViewport", {}) or layout.get("layoutViewport", {})
             serialized.scroll_info = {
@@ -297,6 +296,69 @@ class DOMNode(BaseModel):
         bbox = self.bounding_box
         return bbox.get("width", 0) > 0 and bbox.get("height", 0) > 0
 
+    @property
+    def stable_hash(self) -> int:
+        """
+        Compute stable hash for element identification across sessions.
+
+        Filters out dynamic CSS classes (hover, focus, active, loading, etc.)
+        to provide consistent identification even when element state changes.
+        """
+        # Dynamic class patterns to filter out
+        dynamic_patterns = frozenset(
+            {
+                "focus",
+                "hover",
+                "active",
+                "selected",
+                "disabled",
+                "animation",
+                "transition",
+                "loading",
+                "open",
+                "closed",
+                "expanded",
+                "collapsed",
+                "visible",
+                "hidden",
+                "pressed",
+                "checked",
+                "highlighted",
+                "current",
+                "entering",
+                "leaving",
+            }
+        )
+
+        # Filter class attribute
+        class_str = self.attributes.get("class", "")
+        if class_str:
+            classes = class_str.split()
+            stable_classes = [
+                c for c in classes if not any(pattern in c.lower() for pattern in dynamic_patterns)
+            ]
+            stable_class_str = " ".join(sorted(stable_classes))
+        else:
+            stable_class_str = ""
+
+        # Build stable attributes (exclude dynamic ones)
+        stable_attrs = {}
+        for key, val in self.attributes.items():
+            if key == "class":
+                stable_attrs["class"] = stable_class_str
+            elif key not in ("style",):  # Exclude style as it can be dynamic
+                stable_attrs[key] = val
+
+        # Compute hash from stable components
+        import hashlib
+
+        hash_components = (
+            self.node_name,
+            tuple(sorted(stable_attrs.items())),
+            self.ax_role,
+        )
+        return int(hashlib.sha256(str(hash_components).encode("utf-8")).hexdigest(), 16)
+
 
 class SelectorGenerator:
     """Generates multiple selector strategies for elements."""
@@ -383,7 +445,7 @@ class DOMSerializer:
         )
 
     def _describe_node(self, node: DOMNode) -> str:
-        """Create human-readable description."""
+        """Create human-readable description with rich context for LLM."""
         parts = [node.node_name.lower()]
 
         # Show accessibility name (button text, link text, etc.)
@@ -406,11 +468,55 @@ class DOMSerializer:
         # Show placeholder (standard and data-placeholder for contenteditable)
         placeholder = node.attributes.get("placeholder") or node.attributes.get("data-placeholder")
         if placeholder:
-            parts.append(f"placeholder={placeholder[:30]}")
+            parts.append(f'placeholder="{placeholder[:30]}"')
 
         # Show aria-label if no ax_name
         if not node.ax_name and node.attributes.get("aria-label"):
             parts.append(f'"{node.attributes["aria-label"]}"')
+
+        # === ENHANCED ATTRIBUTES FOR LLM CONTEXT ===
+
+        # Validation hints (help LLM avoid brute force attempts)
+        if node.attributes.get("required"):
+            parts.append("required")
+        if node.attributes.get("pattern"):
+            parts.append(f'pattern="{node.attributes["pattern"][:20]}..."')
+        if node.attributes.get("min"):
+            parts.append(f"min={node.attributes['min']}")
+        if node.attributes.get("max"):
+            parts.append(f"max={node.attributes['max']}")
+        if node.attributes.get("minlength"):
+            parts.append(f"minlen={node.attributes['minlength']}")
+        if node.attributes.get("maxlength"):
+            parts.append(f"maxlen={node.attributes['maxlength']}")
+        if node.attributes.get("step"):
+            parts.append(f"step={node.attributes['step']}")
+
+        # Input modes (virtual keyboard hints)
+        if node.attributes.get("inputmode"):
+            parts.append(f"inputmode={node.attributes['inputmode']}")
+        if node.attributes.get("autocomplete"):
+            ac = node.attributes["autocomplete"]
+            if ac not in ("on", "off"):  # Only show meaningful values
+                parts.append(f"autocomplete={ac}")
+
+        # File input types
+        if node.attributes.get("accept"):
+            parts.append(f"accept={node.attributes['accept'][:20]}")
+        if node.attributes.get("multiple"):
+            parts.append("multiple")
+
+        # Test identifiers (useful for debugging and recognition)
+        for test_attr in ["data-testid", "data-cy", "data-test", "data-selenium"]:
+            if node.attributes.get(test_attr):
+                parts.append(f'{test_attr}="{node.attributes[test_attr]}"')
+                break  # Only show first found
+
+        # Disabled/readonly state
+        if node.attributes.get("disabled") is not None:
+            parts.append("disabled")
+        if node.attributes.get("readonly") is not None:
+            parts.append("readonly")
 
         return " ".join(parts)
 
