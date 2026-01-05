@@ -6,14 +6,13 @@ Uses structured output for stateful reasoning across steps.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-import base64
-from heimdall.utils.media import save_screenshot_async
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +25,7 @@ from heimdall.agent.views import (
     StepMetadata,
 )
 from heimdall.events.bus import EventBus
+from heimdall.utils.media import save_screenshot_async
 from heimdall.watchdogs import (
     DOMWatchdog,
     ErrorWatchdog,

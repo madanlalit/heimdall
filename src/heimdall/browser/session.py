@@ -153,7 +153,7 @@ class BrowserSession(BaseModel):
         Args:
             cdp_url: Optional CDP WebSocket URL. If not provided, launches Chrome.
         """
-        from cdp_use import CDPClient
+        from cdp_use import CDPClient  # type: ignore
 
         if self._connected:
             logger.warning("Session already started, skipping.")

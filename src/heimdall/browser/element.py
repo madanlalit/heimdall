@@ -208,7 +208,7 @@ class Element:
             visible_min_y = max(0, min_y)
             visible_max_y = min(viewport_height, max_y)
 
-            visible_area = (visible_max_x - visible_min_x) * (visible_max_y - visible_min_y)
+            visible_area = int((visible_max_x - visible_min_x) * (visible_max_y - visible_min_y))
 
             if visible_area > best_area:
                 best_area = visible_area

@@ -63,8 +63,8 @@ class ToolRegistry:
 
     def __init__(self):
         self._actions: dict[str, Action] = {}
-        self._session: "BrowserSession | None" = None
-        self._dom_state: "SerializedDOM | None" = None
+        self._session: BrowserSession | None = None
+        self._dom_state: SerializedDOM | None = None
         self._allowed_domains: list[str] = []
 
     def set_context(
