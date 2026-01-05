@@ -80,7 +80,6 @@ class OpenRouterLLM(BaseLLM):
             tool_choice: Tool choice mode
             response_schema: JSON schema for structured output (enforces format)
         """
-        # Build extra headers for OpenRouter
         extra_headers = {
             "X-Title": self._site_name,
         }
@@ -93,7 +92,6 @@ class OpenRouterLLM(BaseLLM):
             "extra_headers": extra_headers,
         }
 
-        # Use JSON Schema mode if provided (more reliable than free-form text)
         if response_schema:
             params["response_format"] = {
                 "type": "json_schema",
@@ -109,7 +107,6 @@ class OpenRouterLLM(BaseLLM):
 
         params.update(kwargs)
 
-        # Log request
         logger.debug(f"LLM Request - {len(messages)} messages, {len(tools) if tools else 0} tools")
         for msg in messages:
             role = msg.get("role", "?")
@@ -118,7 +115,6 @@ class OpenRouterLLM(BaseLLM):
 
         response = await self._client.chat.completions.create(**params)
 
-        # Log token usage
         if response.usage:
             logger.info(
                 f"Tokens: {response.usage.prompt_tokens} in, "
@@ -128,7 +124,6 @@ class OpenRouterLLM(BaseLLM):
 
         message = response.choices[0].message
 
-        # Log response content
         logger.debug(
             f"LLM Response: {message.content[:500] if message.content else '(no content)'}"
         )

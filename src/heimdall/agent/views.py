@@ -19,13 +19,10 @@ class ActionResult(BaseModel):
     is_done: bool = False
     success: bool | None = None
 
-    # Error handling
     error: str | None = None
 
-    # Content extracted by action
     extracted_content: str | None = None
 
-    # Memory to persist
     long_term_memory: str | None = None
 
 
@@ -159,7 +156,6 @@ class AgentHistory(BaseModel):
                 action_name = list(action.keys())[0] if action else "unknown"
                 if result.success:
                     status = "Success"
-                    # Include extracted content (e.g., human guidance) if present
                     if result.extracted_content:
                         status += f" - {result.extracted_content}"
                 else:
@@ -246,12 +242,10 @@ class AgentHistoryList(BaseModel):
         for i, h in enumerate(self.history):
             step_text = f"Step {i + 1}:\n"
 
-            # Get actions from model_output
             if h.model_output and h.model_output.action:
                 actions_json = json.dumps(h.model_output.action, indent=1)
                 step_text += f"Actions: {actions_json}\n"
 
-            # Get results
             if h.results:
                 for j, result in enumerate(h.results):
                     if result.extracted_content:

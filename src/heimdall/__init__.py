@@ -29,26 +29,20 @@ from heimdall.logging import logger, setup_logging
 from heimdall.tools import ActionResult, action, registry
 
 __all__ = [
-    # Core
     "__version__",
+    "Agent",
     "BrowserSession",
     "BrowserConfig",
     "Element",
-    # DOM
     "DomService",
     "SerializedDOM",
-    # Agent
-    "Agent",
     "AgentConfig",
     "AgentState",
-    # Tools
     "registry",
     "action",
     "ActionResult",
-    # Events
     "EventBus",
     "Event",
-    # Logging
     "setup_logging",
     "logger",
 ]

@@ -72,7 +72,6 @@ def run(
 
     from heimdall.logging import setup_logging
 
-    # Setup logging
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG" if verbose else "INFO"
     setup_logging(level=level)
 
@@ -82,7 +81,6 @@ def run(
     if url:
         console.print(f"URL: {url}")
 
-    # Check if task is a file
     task_path = Path(task)
     if task_path.exists() and task_path.suffix in [".yaml", ".yml", ".json"]:
         task_content = _load_task_file(task_path)
@@ -90,7 +88,6 @@ def run(
     else:
         task_content = task
 
-    # Load custom instructions from file if provided
     extend_system_prompt = None
     if instructions:
         instructions_path = Path(instructions)
@@ -100,7 +97,6 @@ def run(
         else:
             console.print(f"[yellow]Warning: Instructions file not found: {instructions}[/yellow]")
 
-    # Run agent
     try:
         result = asyncio.run(
             _run_agent(
@@ -164,12 +160,10 @@ async def _run_agent(
 
     print(f"Registered {len(registry.schema())} actions")  # Debug
 
-    # Setup LLM
     from heimdall.agent.factory import create_llm_client
 
     llm = create_llm_client(provider=llm_provider, model=model)
 
-    # Setup browser - use provided profile or create temp profile
     if user_data_dir:
         # Use existing Chrome profile with cookies
         expanded_dir = str(Path(user_data_dir).expanduser())
@@ -193,7 +187,6 @@ async def _run_agent(
     try:
         await session.start()
 
-        # Navigate to URL if provided
         if url:
             await session.navigate(url)
 
@@ -204,11 +197,9 @@ async def _run_agent(
 
             domain = extract_domain_from_url(url)
             if domain:
-                # Allow the domain and its subdomains
                 allowed_domains = [domain, f"*.{domain}"]
                 logger.info(f"Domain restriction: {allowed_domains}")
 
-        # Setup agent
         dom_service = DomService(session)
         agent = Agent(
             session=session,
@@ -224,10 +215,8 @@ async def _run_agent(
             ),
         )
 
-        # Run task
         result = await agent.run(task)
 
-        # Export results
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         # Note: In real usage, we'd integrate Collector during execution
@@ -249,7 +238,6 @@ def _load_task_file(path: Path) -> str:
 
     data = yaml.safe_load(content) if path.suffix in [".yaml", ".yml"] else json.loads(content)
 
-    # Extract task description
     if isinstance(data, dict):
         task_val = data.get("task") or data.get("description")
         return str(task_val) if task_val is not None else str(data)
@@ -273,7 +261,9 @@ def init(
     workspace = Path(directory)
     workspace.mkdir(parents=True, exist_ok=True)
 
-    # Create sample config
+    workspace = Path(directory)
+    workspace.mkdir(parents=True, exist_ok=True)
+
     config_path = workspace / "heimdall.yaml"
     if not config_path.exists():
         config_path.write_text("""# Heimdall Configuration
@@ -291,7 +281,8 @@ output:
 """)
         console.print(f"Created: {config_path}")
 
-    # Create sample task
+        console.print(f"Created: {config_path}")
+
     task_path = workspace / "task.yaml"
     if not task_path.exists():
         task_path.write_text("""# Sample Heimdall Task

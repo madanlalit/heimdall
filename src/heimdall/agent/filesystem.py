@@ -24,13 +24,11 @@ class FileSystem:
         if base_dir:
             self.data_dir = Path(base_dir)
         else:
-            # Use hidden .heimdall directory in the project root
             self.data_dir = Path.cwd() / ".heimdall"
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Using data directory: {self.data_dir}")
 
-        # Initialize default files
         self._init_todo()
 
     def _init_todo(self) -> None:

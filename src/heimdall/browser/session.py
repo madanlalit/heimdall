@@ -24,16 +24,14 @@ class BrowserConfig(BaseModel):
     headless: bool = True
     executable_path: str | Path | None = None
     user_data_dir: str | Path | None = None
-    profile_directory: str = "Default"  # Chrome profile name (Default, Profile 1, etc.)
+    profile_directory: str = "Default"
     window_size: tuple[int, int] = (1280, 800)
     args: list[str] = Field(default_factory=list)
-    disable_extensions: bool = True  # Set to False when using existing profile with extensions
+    disable_extensions: bool = True
 
-    # Timeouts
     navigation_timeout: float = 30.0
     action_timeout: float = 10.0
 
-    # Track if profile was copied (for cleanup)
     _original_user_data_dir: str | None = None
     _is_temp_profile: bool = False
 
@@ -60,22 +58,18 @@ class BrowserConfig(BaseModel):
             self._is_temp_profile = True
             return
 
-        # Check if this looks like a Chrome profile directory
         is_chrome = "chrome" in user_data_str.lower() or "chromium" in user_data_str.lower()
         if not is_chrome:
             return
 
-        # Store original for reference
         self._original_user_data_dir = user_data_str
 
-        # Create temp directory
         temp_dir = tempfile.mkdtemp(prefix="heimdall_chrome_")
         path_original_user_data = Path(self.user_data_dir)
         path_original_profile = path_original_user_data / self.profile_directory
         path_temp_profile = Path(temp_dir) / self.profile_directory
 
         if path_original_profile.exists():
-            # Copy the profile directory
             shutil.copytree(path_original_profile, path_temp_profile)
 
             # Copy Local State file (contains encryption keys for cookies)
@@ -86,12 +80,10 @@ class BrowserConfig(BaseModel):
 
             logger.info(f"Copied profile '{self.profile_directory}' to temp directory: {temp_dir}")
         else:
-            # Create empty profile directory
             Path(temp_dir).mkdir(parents=True, exist_ok=True)
             path_temp_profile.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created new profile in temp directory: {temp_dir}")
 
-        # Update to use temp directory
         self.user_data_dir = temp_dir
         self._is_temp_profile = True
 
@@ -153,7 +145,7 @@ class BrowserSession(BaseModel):
         Args:
             cdp_url: Optional CDP WebSocket URL. If not provided, launches Chrome.
         """
-        from cdp_use import CDPClient  # type: ignore
+        from cdp_use import CDPClient
 
         if self._connected:
             logger.warning("Session already started, skipping.")
@@ -312,10 +304,8 @@ class BrowserSession(BaseModel):
     async def _launch_chrome(self) -> str:
         """Launch Chrome with CDP enabled and return WebSocket URL."""
 
-        # Find free port
         port = self._find_free_port()
 
-        # Build Chrome arguments
         chrome_args = [
             str(self.config.executable_path)
             if self.config.executable_path
@@ -329,7 +319,6 @@ class BrowserSession(BaseModel):
             "--disable-sync",
         ]
 
-        # Only disable extensions for temp profiles
         if self.config.disable_extensions:
             chrome_args.append("--disable-extensions")
 
@@ -338,7 +327,6 @@ class BrowserSession(BaseModel):
 
         if self.config.user_data_dir:
             chrome_args.append(f"--user-data-dir={self.config.user_data_dir}")
-            # Add profile directory if specified (only relevant with user_data_dir)
             if self.config.profile_directory and self.config.profile_directory != "Default":
                 chrome_args.append(f"--profile-directory={self.config.profile_directory}")
 
@@ -353,7 +341,6 @@ class BrowserSession(BaseModel):
             stderr=subprocess.DEVNULL,
         )
 
-        # Wait for CDP to be ready
         ws_url = await self._wait_for_cdp(port)
         return ws_url
 
@@ -481,11 +468,9 @@ class BrowserSession(BaseModel):
             await self.execute_js(script)
         except Exception as e:
             logger.debug(f"Could not inject stability script: {e}")
-            # Fallback: just wait a bit
             await asyncio.sleep(0.5)
             return
 
-        # Poll for stability
         start = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start < timeout:
             try:

@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Retry configuration
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_DELAY = 0.5  # seconds
 
@@ -64,7 +63,6 @@ async def with_retry(
             ]
 
             if not any(err in error_msg.lower() for err in retryable_errors):
-                # Not a retryable error, return immediately
                 return result
 
             last_error = result.error
@@ -72,7 +70,6 @@ async def with_retry(
         except Exception as e:
             last_error = str(e)
 
-        # Wait before retry with exponential backoff
         if attempt < max_retries:
             wait_time = delay * (2**attempt)
             logger.debug(
@@ -81,7 +78,6 @@ async def with_retry(
             )
             await asyncio.sleep(wait_time)
 
-    # All retries exhausted
     error_detail = f"Failed after {max_retries + 1} attempts"
     if element_context:
         error_detail += f" on {element_context}"
@@ -172,7 +168,6 @@ async def navigate(
     """Navigate to a URL."""
     from heimdall.utils.domain import is_url_allowed
 
-    # Check if URL is allowed
     if allowed_domains and not is_url_allowed(url, allowed_domains):
         return ActionResult.fail(
             f"Navigation blocked: {url} is not in allowed domains {allowed_domains}"
@@ -207,7 +202,7 @@ async def refresh_page(session: "BrowserSession") -> ActionResult:
     """Refresh the current page to get fresh content."""
     try:
         await session.execute_js("window.location.reload()")
-        await asyncio.sleep(1.0)  # Wait for page to reload
+        await asyncio.sleep(1.0)
 
         return ActionResult.ok("Page refreshed")
     except Exception as e:
@@ -390,7 +385,6 @@ async def ask_human(
 
     console = Console()
 
-    # Display the agent's question prominently
     console.print()
     console.print(
         Panel(
@@ -400,7 +394,6 @@ async def ask_human(
         )
     )
 
-    # Get human response
     try:
         import asyncio
         from functools import partial

@@ -67,11 +67,8 @@ class Element:
         """
         Click the element using multiple strategies with fallback.
 
-        Strategy order:
-        1. DOM.getContentQuads (best for inline/complex layouts)
-        2. DOM.getBoxModel fallback
-        3. JS getBoundingClientRect() fallback
-        4. JS .click() as last resort
+        Strategies: DOM.getContentQuads -> DOM.getBoxModel
+        -> JS getBoundingClientRect -> JS .click()
         """
         client = self._session.cdp_client
         session_id = self._session.session_id
@@ -84,10 +81,9 @@ class Element:
         except Exception:
             viewport_width, viewport_height = 1920, 1080  # Fallback defaults
 
-        # Try multiple methods to get element geometry
         quads: list[list[float]] = []
 
-        # Method 1: DOM.getContentQuads (best for inline elements)
+        # Method 1: DOM.getContentQuads
         try:
             result = await client.send.DOM.getContentQuads(
                 {"backendNodeId": self._backend_node_id},
@@ -146,7 +142,7 @@ class Element:
             except Exception as e:
                 logger.debug(f"JS getBoundingClientRect failed: {e}")
 
-        # Method 4: JS .click() as last resort if no geometry available
+        # Method 4: JS .click() fallback
         if not quads:
             logger.debug("No geometry found, falling back to JS click")
             await self._js_click()
@@ -364,7 +360,6 @@ class Element:
             else:
                 await self._type_char(char)
 
-            # Human-like delay between keystrokes (15-25ms)
             await asyncio.sleep(0.018)
 
         logger.debug(f"Typed {len(text)} chars into element {self._backend_node_id}")
@@ -415,7 +410,7 @@ class Element:
         client = self._session.cdp_client
         session_id = self._session.session_id
 
-        # Strategy 1: JS value setting + dispatchEvent (works with React/Vue)
+        # Strategy 1: JS value setting + dispatchEvent
         try:
             result = await client.send.DOM.resolveNode(
                 {"backendNodeId": self._backend_node_id},
@@ -507,10 +502,9 @@ class Element:
             session_id=session_id,
         )
 
-        # Small delay
         await asyncio.sleep(0.001)
 
-        # Step 2: char event (with text) - Critical for text input!
+        # Step 2: char event (with text)
         await client.send.Input.dispatchKeyEvent(
             {
                 "type": "char",

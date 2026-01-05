@@ -50,31 +50,28 @@ class AgentConfig(BaseModel):
     max_consecutive_failures: int = 5
     step_timeout: float = 60.0
 
-    # Vision: send screenshots to LLM (user-toggleable)
+    # Vision: send screenshots to LLM
     use_vision: bool = False
 
     # Stateful reasoning options
-    use_thinking: bool = True  # Enable thinking field in output
-    flash_mode: bool = False  # Disable evaluation/next_goal for speed
-    max_actions_per_step: int = 3  # Max actions per LLM response
+    use_thinking: bool = True
+    flash_mode: bool = False
+    max_actions_per_step: int = 3
 
-    # Wait for page stability after actions
     wait_for_stability: bool = True
     stability_timeout: float = 5.0
-    network_idle_timeout: float = 2.0  # Time to wait for network idle after navigation
+    network_idle_timeout: float = 2.0
 
-    # Domain restriction: only allow navigation to these domains
-    # If empty, all domains are allowed
+    # Domain restriction
     # Examples: ["chatgpt.com", "*.openai.com", "google.com"]
     allowed_domains: list[str] = Field(default_factory=list)
 
     # Custom instructions to extend the system prompt
-    # This content is appended to the base system prompt
     extend_system_prompt: str | None = None
 
     # Tracing options
-    save_trace_path: str | Path | None = None  # Path to save execution trace
-    capture_screenshots: bool = False  # Capture screenshots at each step
+    save_trace_path: str | Path | None = None
+    capture_screenshots: bool = False
 
 
 class AgentState(BaseModel):
@@ -85,7 +82,6 @@ class AgentState(BaseModel):
     success: bool = False
     error: str | None = None
 
-    # Failure tracking
     consecutive_failures: int = 0
     total_failures: int = 0
     previous_url: str | None = None
@@ -133,12 +129,10 @@ class Agent:
             "error": ErrorWatchdog(self._session, self._bus),
         }
 
-        # File system for persisting agent data (todo.md, etc.)
         from heimdall.agent.filesystem import FileSystem
 
         self._filesystem = FileSystem()
 
-        # Subscribe to watchdog events
         self._subscribe_to_events()
 
     async def run(self, task: str) -> AgentHistoryList:
@@ -155,10 +149,8 @@ class Agent:
         self._state = AgentState()
         self._history = AgentHistoryList()
 
-        # Initialize todo with task
         self._filesystem.update_todo([f"Complete: {task[:100]}"])
 
-        # Start watchdogs
         for w in self._watchdogs.values():
             await w.start()
 
@@ -174,16 +166,13 @@ class Agent:
             self._state.success = False
 
         finally:
-            # Stop watchdogs
             for w in self._watchdogs.values():
                 await w.stop()
 
-            # Unsubscribe from events
             self._unsubscribe_from_events()
 
         logger.info(f"Task complete: success={self._state.success}")
 
-        # Save trace to file if configured
         if self._config.save_trace_path:
             try:
                 self._history.save_to_file(self._config.save_trace_path)
@@ -209,11 +198,10 @@ class Agent:
             allowed_domains=self._config.allowed_domains,
         )
 
-        # 2. Optional: capture screenshot for vision or tracing
+        # 2. Capture screenshot
         screenshot_b64 = None
         screenshot_path = None
 
-        # Only capture if needed for vision OR if user explicitly requested screenshots
         if self._config.use_vision or self._config.capture_screenshots:
             try:
                 screenshot_data = await self._session.screenshot()
@@ -229,11 +217,9 @@ class Agent:
             except Exception as e:
                 logger.debug(f"Screenshot capture failed: {e}")
 
-        # 2b. Track URL changes
         current_url = getattr(dom_state, "url", "unknown")
 
-        # 3. Build messages with structured history
-        # Collect errors from watchdogs
+        # 3. Build messages
         js_errors = self._watchdogs["error"].js_errors  # type: ignore
         failed_requests = self._watchdogs["network"].failed_requests  # type: ignore
 
@@ -256,14 +242,12 @@ class Agent:
             self._state.consecutive_failures += 1
             return
 
-        # Update previous URL for next step
         self._state.previous_url = current_url
 
-        # Clear errors after sending to LLM (so they don't persist)
         self._watchdogs["error"].clear_errors()  # type: ignore
         self._watchdogs["network"].clear_failed_requests()  # type: ignore
 
-        # 5. Parse structured output
+        # 5. Parse output
         agent_output = self._parse_agent_output(response)
 
         if not agent_output or not agent_output.action:
@@ -271,13 +255,12 @@ class Agent:
             self._state.consecutive_failures += 1
             return
 
-        # Log the agent's reasoning
         if agent_output.evaluation_previous_goal:
             logger.info(f"Evaluation: {agent_output.evaluation_previous_goal}")
         if agent_output.next_goal:
             logger.info(f"Next Goal: {agent_output.next_goal}")
 
-        # 6. Execute actions and collect results
+        # 6. Execute actions
         results: list[ActionResult] = []
         page_changed = False
 
@@ -286,7 +269,6 @@ class Agent:
                 logger.debug("Page changed, skipping remaining actions")
                 break
 
-            # Extract action name and args
             if not action_dict:
                 continue
 
@@ -295,10 +277,8 @@ class Agent:
 
             logger.info(f"Tool call: {action_name}({json.dumps(action_args)[:50]}...)")
 
-            # Execute action
             exec_result = await self._registry.execute(action_name, action_args)
 
-            # Convert to ActionResult
             result = ActionResult(
                 is_done=action_name == "done",
                 success=exec_result.success,
@@ -310,13 +290,12 @@ class Agent:
             if exec_result.success:
                 self._state.consecutive_failures = 0
 
-                # Check for done action
                 if action_name == "done":
                     self._state.done = True
                     self._state.success = action_args.get("success", True)
                     break
 
-                # Wait for page stability after state-changing actions
+                # Wait for page stability
                 if self._config.wait_for_stability and action_name in (
                     "click",
                     "navigate",
@@ -326,7 +305,6 @@ class Agent:
                     try:
                         logger.debug("Waiting for page stability...")
 
-                        # Use navigation watchdog for page load
                         nav_watchdog: NavigationWatchdog = self._watchdogs["navigation"]  # type: ignore
                         nav_complete = await nav_watchdog.wait_for_load(
                             timeout=self._config.stability_timeout
@@ -335,7 +313,6 @@ class Agent:
                         if nav_complete:
                             logger.debug("Navigation load complete")
 
-                        # Also wait for network idle for better stability
                         net_watchdog: NetworkWatchdog = self._watchdogs["network"]  # type: ignore
                         net_idle = await net_watchdog.wait_for_idle(
                             timeout=self._config.network_idle_timeout
@@ -348,7 +325,6 @@ class Agent:
                                 f"Network idle timeout ({net_watchdog.pending_count} pending)"
                             )
 
-                        # Check if URL changed (indicates page navigation)
                         new_dom = await self._dom_service.get_state()
                         if (
                             hasattr(new_dom, "url")
@@ -364,7 +340,7 @@ class Agent:
                 self._state.total_failures += 1
                 logger.warning(f"Action failed: {exec_result.error}")
 
-        # 7. Record step in history with timing metadata
+        # 7. Record history
         step_end_time = time.time()
         history_item = AgentHistory(
             step_number=step_number,
@@ -386,7 +362,7 @@ class Agent:
         )
         self._history.add(history_item)
 
-        # Save trace incrementally after each step (in case of interruption)
+        # Save trace
         if self._config.save_trace_path:
             try:
                 self._history.save_to_file(self._config.save_trace_path)
@@ -394,11 +370,10 @@ class Agent:
             except Exception as e:
                 logger.warning(f"Failed to update trace: {e}")
 
-        # 8. Update todo.md if agent provided a todo list
+        # 8. Update todo
         if agent_output.todo:
             self._filesystem.update_todo(agent_output.todo)
 
-        # Small delay between steps
         await asyncio.sleep(0.2)
 
     def _parse_agent_output(self, response: dict) -> AgentOutput | None:
@@ -406,7 +381,7 @@ class Agent:
         content = response.get("content", "")
 
         if not content:
-            # Try to extract from tool calls (fallback for tool-calling models)
+            # Fallback: tool calls
             tool_calls = response.get("tool_calls", [])
             if tool_calls:
                 actions = []
@@ -424,7 +399,7 @@ class Agent:
                 return AgentOutput(action=actions) if actions else None
             return None
 
-        # Try to parse JSON from content
+        # Parse JSON
         try:
             from heimdall.utils.text import extract_json_from_markdown
 
@@ -432,12 +407,10 @@ class Agent:
 
             data = json.loads(content)
 
-            # Parse actions
             actions = data.get("action", [])
             if isinstance(actions, dict):
                 actions = [actions]
 
-            # Normalize actions to ensure correct format
             normalized_actions = self._normalize_actions(actions)
 
             return AgentOutput(
@@ -497,13 +470,11 @@ class Agent:
             f"Registry has {len(self._registry.actions)} actions, schema has {len(tools)} tools"
         )
 
-        # Generate JSON schema for structured output
         from heimdall.agent.schema import create_agent_output_schema
 
         response_schema = create_agent_output_schema(tools)
 
         # Request structured output using JSON Schema mode
-        # This enforces the format at API level - much more reliable
         response = await self._llm.chat_completion(
             messages=messages,
             tools=tools,

@@ -20,7 +20,6 @@ def create_agent_output_schema(tool_definitions: list[dict[str, Any]]) -> dict[s
         name = func.get("name", "")
         params = func.get("parameters", {})
 
-        # Create schema for this action: {"action_name": {params}}
         action_schemas.append(
             {
                 "type": "object",

@@ -23,7 +23,7 @@ class BaseLLM(ABC):
 
         Args:
             messages: Chat messages
-            tools: Tool definitions for function calling
+            tools: Tool definitions
             tool_choice: Tool selection mode
 
         Returns:

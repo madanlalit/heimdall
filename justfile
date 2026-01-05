@@ -5,10 +5,6 @@
 default:
     @just --list
 
-# ─────────────────────────────────────────────────────────────
-# Setup
-# ─────────────────────────────────────────────────────────────
-
 # Install dependencies (dev mode)
 install:
     uv pip install -e ".[dev]"
@@ -17,10 +13,6 @@ install:
 sync:
     uv sync
 
-# ─────────────────────────────────────────────────────────────
-# Running the Agent
-# ─────────────────────────────────────────────────────────────
-
 # Run agent with a task and URL
 run task url *args:
     uv run heimdall run "{{task}}" --url "{{url}}" {{args}}
@@ -28,10 +20,6 @@ run task url *args:
 # Run with specific model
 run-model task url model:
     uv run heimdall run "{{task}}" --url "{{url}}" --model "{{model}}"
-
-# ─────────────────────────────────────────────────────────────
-# Code Quality
-# ─────────────────────────────────────────────────────────────
 
 # Lint code with ruff
 lint:
@@ -59,10 +47,6 @@ check: lint typecheck
 # Fix and format everything
 fix: lint-fix fmt
 
-# ─────────────────────────────────────────────────────────────
-# Testing
-# ─────────────────────────────────────────────────────────────
-
 # Run tests
 test *args:
     uv run pytest {{args}}
@@ -75,17 +59,9 @@ test-v:
 test-file file:
     uv run pytest "{{file}}" -v
 
-# ─────────────────────────────────────────────────────────────
-# Examples
-# ─────────────────────────────────────────────────────────────
-
 # Run basic example
 example:
     uv run python examples/test_basic.py
-
-# ─────────────────────────────────────────────────────────────
-# Development
-# ─────────────────────────────────────────────────────────────
 
 # Show heimdall CLI help
 help:
