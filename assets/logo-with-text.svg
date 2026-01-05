@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 210" width="300" height="210">
+  <defs>
+    <!-- 
+      "Molten Gold" Gradient
+      Diagonal (135 degrees) for dynamic energy.
+      Colors: Deep Solar Orange to Soft Sunlight.
+    -->
+    <linearGradient id="worldClassGradient" gradientUnits="userSpaceOnUse" x1="50" y1="20" x2="250" y2="200">
+      <stop offset="0%" style="stop-color:#FF4B1F;stop-opacity:1" /> <!-- Deep Solar Orange -->
+      <stop offset="100%" style="stop-color:#FF9068;stop-opacity:1" /> <!-- Sunset Gold -->
+    </linearGradient>
+    
+    <!-- Subtle drop shadow for depth (optional, keeps it flat but distinct) -->
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
+      <feOffset dx="0" dy="2" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.2"/>
+      </feComponentTransfer>
+      <feMerge> 
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/> 
+      </feMerge>
+    </filter>
+
+    <style>
+      .logo-stroke {
+        fill: none;
+        stroke: url(#worldClassGradient);
+        stroke-width: 12; /* Slightly bolder for impact */
+        stroke-linecap: square;
+        stroke-linejoin: round; /* Softer corners */
+      }
+      .logo-text {
+        font-family: 'Poppins', sans-serif;
+        font-size: 68px;
+        font-weight: 700;
+        fill: url(#worldClassGradient);
+        text-anchor: middle;
+        letter-spacing: -2.5px; /* Tight, premium tracking */
+      }
+    </style>
+  </defs>
+  
+  <!-- Group with filter applied -->
+  <g filter="url(#softGlow)">
+    <!-- Logo Icon -->
+    <g transform="translate(50, 0)">
+      <!-- Eye shape -->
+      <!-- Adjusted curves slightly for perfect geometric flow -->
+      <path d="M 20 80 Q 60 38, 100 38 Q 140 38, 180 80 Q 140 122, 100 122 Q 60 122, 20 80" class="logo-stroke"/>
+      
+      <!-- Inner circle -->
+      <circle cx="100" cy="80" r="38" class="logo-stroke"/>
+
+      <!-- Vertical line -->
+      <line x1="100" y1="25" x2="100" y2="135" class="logo-stroke"/>
+    </g>
+    
+    <!-- Text -->
+    <text x="150" y="195" class="logo-text">heimdall</text>
+  </g>
+</svg>

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" width="200" height="160">
+  <defs>
+    <style>
+      .logo-stroke {
+        fill: none;
+        stroke: #000000;
+        stroke-width: 11;
+        stroke-linecap: square;
+        stroke-linejoin: miter;
+      }
+    </style>
+  </defs>
+  
+  <!-- Vertical line (shorter) -->
+  <line x1="100" y1="28" x2="100" y2="132" class="logo-stroke"/>
+  
+  <!-- Eye shape -->
+  <path d="M 20 80 Q 60 40, 100 40 Q 140 40, 180 80 Q 140 120, 100 120 Q 60 120, 20 80" class="logo-stroke"/>
+  
+  <!-- Inner circle (iris) -->
+  <circle cx="100" cy="80" r="38" class="logo-stroke"/>
+</svg>
