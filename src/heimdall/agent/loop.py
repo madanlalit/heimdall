@@ -214,16 +214,25 @@ class Agent:
             try:
                 import base64
 
+                from heimdall.utils.media import save_screenshot_async
+
                 screenshot_data = await self._session.screenshot()
                 screenshot_b64 = base64.b64encode(screenshot_data).decode()
 
-                # Save screenshot to file if tracing
-                if self._config.capture_screenshots and self._config.save_trace_path:
-                    trace_dir = Path(self._config.save_trace_path).parent / "screenshots"
-                    trace_dir.mkdir(parents=True, exist_ok=True)
-                    screenshot_path = str(trace_dir / f"step_{step_number}.png")
-                    with open(screenshot_path, "wb") as f:
-                        f.write(screenshot_data)
+                # Determine save directory
+                save_dir = None
+                if self._config.save_trace_path:
+                    save_dir = Path(self._config.save_trace_path).parent / "screenshots"
+                elif self._config.use_vision:
+                    # Fallback for vision usage without trace path
+                    save_dir = Path("output/screenshots")
+
+                # Save if we determined a directory (tracing or vision)
+                if save_dir:
+                    screenshot_path = str(save_dir / f"step_{step_number}.png")
+                    # Non-blocking save to avoid performance hit
+                    asyncio.create_task(save_screenshot_async(screenshot_data, screenshot_path))
+
             except Exception as e:
                 logger.debug(f"Screenshot capture failed: {e}")
 
@@ -636,7 +645,10 @@ class MessageBuilder:
         scroll_str = ""
         if hasattr(dom_state, "scroll_info") and dom_state.scroll_info:
             info = dom_state.scroll_info
-            scroll_str = f"Scroll: {info.get('x', 0)}, {info.get('y', 0)} (Viewport: {info.get('width', 0)}x{info.get('height', 0)})"
+            scroll_str = (
+                f"Scroll: {info.get('x', 0)}, {info.get('y', 0)} "
+                f"(Viewport: {info.get('width', 0)}x{info.get('height', 0)})"
+            )
 
         user_content += f"""<browser_state>
 URL: {url}
