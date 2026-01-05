@@ -59,10 +59,6 @@ test-v:
 test-file file:
     uv run pytest "{{file}}" -v
 
-# Run basic example
-example:
-    uv run python examples/test_basic.py
-
 # Show heimdall CLI help
 help:
     uv run heimdall --help
@@ -78,3 +74,4 @@ clean:
     find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
     find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
     find . -type d -name ".heimdall" -exec rm -rf {} + 2>/dev/null || true
+    find . -type d -name "output" -exec rm -rf {} + 2>/dev/null || true

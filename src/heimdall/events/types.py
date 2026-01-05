@@ -82,8 +82,10 @@ class NetworkRequestCompletedEvent(Event):
 
     request_id: str = ""
     url: str = ""
+    method: str = "GET"
     status: int = 0
     mime_type: str = ""
+    params: str | None = None
 
 
 @dataclass

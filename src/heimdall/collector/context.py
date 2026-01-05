@@ -164,6 +164,7 @@ class Collector:
         method: str,
         status: int | None = None,
         response_type: str = "",
+        params: str | None = None,
     ) -> None:
         """Record a network request."""
         self._network_requests.append(
@@ -172,6 +173,7 @@ class Collector:
                 "method": method,
                 "status": status,
                 "type": response_type,
+                "params": params,
                 "timestamp": datetime.now().isoformat(),
             }
         )

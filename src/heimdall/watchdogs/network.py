@@ -41,7 +41,7 @@ class NetworkWatchdog(BaseWatchdog):
 
         # Track failed requests
         self._failed_requests: list[dict] = []
-        self._request_url_map: dict[str, str] = {}  # Map requestId -> URL
+        self._request_context: dict[str, dict] = {}  # Map requestId -> {url, method, status, type}
 
     async def _initialize(self) -> None:
         """Register CDP event handlers for network tracking."""
@@ -50,20 +50,19 @@ class NetworkWatchdog(BaseWatchdog):
 
         try:
             client = self._session.cdp_client
-            session_id = self._session.session_id
 
             # Register network event handlers
-            await client.register.Network.requestWillBeSent(
+            client.register.Network.requestWillBeSent(
                 self._on_request_started,
-                session_id=session_id,
             )
-            await client.register.Network.loadingFinished(
+            client.register.Network.responseReceived(
+                self._on_response_received,
+            )
+            client.register.Network.loadingFinished(
                 self._on_request_finished,
-                session_id=session_id,
             )
-            await client.register.Network.loadingFailed(
+            client.register.Network.loadingFailed(
                 self._on_request_failed,
-                session_id=session_id,
             )
 
             self._registered = True
@@ -73,17 +72,25 @@ class NetworkWatchdog(BaseWatchdog):
         except Exception as e:
             logger.warning(f"Could not register network handlers: {e}")
 
-    async def _on_request_started(self, params: dict) -> None:
+    async def _on_request_started(self, params: dict, *args, **kwargs) -> None:
         """Handle request started."""
         request_id = params.get("requestId", "")
-        url = params.get("request", {}).get("url", "")
+        request = params.get("request", {})
+        url = request.get("url", "")
+        method = request.get("method", "GET")
 
         # Ignore data URLs and extensions
         if url.startswith("data:") or url.startswith("chrome-extension:"):
             return
 
         self._pending_requests.add(request_id)
-        self._request_url_map[request_id] = url
+        self._request_context[request_id] = {
+            "url": url,
+            "method": method,
+            "status": 0,
+            "type": "",
+            "post_data": request.get("postData"),
+        }
         self._last_activity_time = asyncio.get_event_loop().time()
         self._was_idle = False
 
@@ -91,14 +98,39 @@ class NetworkWatchdog(BaseWatchdog):
             f"Request started: {request_id[:8]}... ({len(self._pending_requests)} pending)"
         )
 
-    async def _on_request_finished(self, params: dict) -> None:
+    async def _on_response_received(self, params: dict, *args, **kwargs) -> None:
+        """Handle response received."""
+        request_id = params.get("requestId", "")
+        response = params.get("response", {})
+        status = response.get("status", 0)
+        mime_type = response.get("mimeType", "")
+
+        if request_id in self._request_context:
+            self._request_context[request_id]["status"] = status
+            self._request_context[request_id]["type"] = mime_type
+
+    async def _on_request_finished(self, params: dict, *args, **kwargs) -> None:
         """Handle request finished."""
         request_id = params.get("requestId", "")
         self._pending_requests.discard(request_id)
-        # Keep URL in map for a bit or clear it? Better to clear to save memory,
-        # but what if failure comes after finish (unlikely)?
-        # Failure usually comes INSTEAD of finish.
-        self._request_url_map.pop(request_id, None)
+
+        # Emit completion event
+        if request_id in self._request_context:
+            ctx = self._request_context[request_id]
+            from heimdall.events.types import NetworkRequestCompletedEvent
+
+            await self._bus.emit(
+                NetworkRequestCompletedEvent(
+                    request_id=request_id,
+                    url=ctx["url"],
+                    method=ctx["method"],
+                    status=ctx["status"],
+                    mime_type=ctx["type"],
+                    params=ctx.get("post_data"),
+                )
+            )
+
+        self._request_context.pop(request_id, None)
 
         self._last_activity_time = asyncio.get_event_loop().time()
 
@@ -106,19 +138,21 @@ class NetworkWatchdog(BaseWatchdog):
             f"Request finished: {request_id[:8]}... ({len(self._pending_requests)} pending)"
         )
 
-    async def _on_request_failed(self, params: dict) -> None:
+    async def _on_request_failed(self, params: dict, *args, **kwargs) -> None:
         """Handle request failed."""
         request_id = params.get("requestId", "")
         error_text = params.get("errorText", "Unknown error")
         timestamp = params.get("timestamp", 0)
 
-        url = self._request_url_map.get(request_id, "unknown")
+        url = "unknown"
+        if request_id in self._request_context:
+            url = self._request_context[request_id]["url"]
 
         # Ignore cancelled requests (often just navigation)
         if error_text == "net::ERR_ABORTED":
             # Still remove from pending
             self._pending_requests.discard(request_id)
-            self._request_url_map.pop(request_id, None)
+            self._request_context.pop(request_id, None)
             return
 
         failure_info = {"url": url, "error": error_text, "timestamp": timestamp}
@@ -126,7 +160,7 @@ class NetworkWatchdog(BaseWatchdog):
 
         # Cleanup
         self._pending_requests.discard(request_id)
-        self._request_url_map.pop(request_id, None)
+        self._request_context.pop(request_id, None)
 
         self._last_activity_time = asyncio.get_event_loop().time()
 

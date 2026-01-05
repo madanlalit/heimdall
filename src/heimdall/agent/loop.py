@@ -75,6 +75,7 @@ class AgentConfig(BaseModel):
     # Tracing options
     save_trace_path: str | Path | None = None
     capture_screenshots: bool = False
+    use_collector: bool = False
 
 
 class AgentState(BaseModel):
@@ -132,6 +133,20 @@ class Agent:
             self._demo_mode = DemoMode(self._session)
             logger.info("Demo mode enabled - visual feedback active")
 
+        # Initialize collector for detailed step capture
+        self._collector = None
+        if self._config.use_collector and self._config.save_trace_path:
+            from heimdall.collector import Collector
+
+            output_dir = Path(self._config.save_trace_path).parent
+            self._collector = Collector(
+                session,
+                output_dir,
+                capture_screenshots=self._config.capture_screenshots or self._config.use_collector,
+                capture_network=True,
+            )
+            logger.info("Collector enabled - detailed step capture active")
+
         # Initialize watchdogs
         self._watchdogs = {
             "navigation": NavigationWatchdog(self._session, self._bus),
@@ -182,14 +197,26 @@ class Agent:
 
             self._unsubscribe_from_events()
 
-        logger.info(f"Task complete: success={self._state.success}")
+            # Save trace (success or failure/interrupt)
+            if self._config.save_trace_path and len(self._history) > 0:
+                try:
+                    self._history.save_to_file(self._config.save_trace_path)
+                    logger.info(f"Trace saved to: {self._config.save_trace_path}")
+                except Exception as e:
+                    logger.error(f"Failed to save trace: {e}")
 
-        if self._config.save_trace_path:
-            try:
-                self._history.save_to_file(self._config.save_trace_path)
-                logger.info(f"Trace saved to: {self._config.save_trace_path}")
-            except Exception as e:
-                logger.error(f"Failed to save trace: {e}")
+            # Export collector data (success or failure/interrupt)
+            if self._collector and self._config.save_trace_path:
+                try:
+                    from heimdall.collector import Exporter
+
+                    exporter = Exporter(Path(self._config.save_trace_path).parent)
+                    exporter.export_steps(self._collector.export()["steps"], "collector_steps.json")
+                    logger.info("Collector steps exported")
+                except Exception as e:
+                    logger.error(f"Failed to export collector data: {e}")
+
+        logger.info(f"Task complete: success={self._state.success}")
 
         return self._history
 
@@ -208,6 +235,10 @@ class Agent:
             dom_state,
             allowed_domains=self._config.allowed_domains,
         )
+
+        # Start collector step capture
+        if self._collector:
+            await self._collector.start_step(step_number, instruction=task, dom_state=dom_state)
 
         # 2. Capture screenshot
         screenshot_b64 = None
@@ -249,7 +280,9 @@ class Agent:
         try:
             response = await self._call_llm(messages)
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+            import traceback
+
+            logger.error(f"LLM call failed: {e}\n{traceback.format_exc()}")
             self._state.consecutive_failures += 1
             return
 
@@ -293,6 +326,17 @@ class Agent:
                 await self._show_demo_feedback(action_name, action_args, dom_state)
 
             exec_result = await self._registry.execute(action_name, action_args)
+
+            # Record action in collector
+            if self._collector:
+                await self._collector.record_action(
+                    action=action_name,
+                    params=action_args,
+                    success=exec_result.success,
+                    message=exec_result.message or "",
+                    error=exec_result.error,
+                    element_info=exec_result.data.get("element"),
+                )
 
             result = ActionResult(
                 is_done=action_name == "done",
@@ -354,6 +398,17 @@ class Agent:
                 self._state.consecutive_failures += 1
                 self._state.total_failures += 1
                 logger.warning(f"Action failed: {exec_result.error}")
+
+        if self._collector and self._config.save_trace_path:
+            await self._collector.end_step()
+            try:
+                from heimdall.collector import Exporter
+
+                exporter = Exporter(Path(self._config.save_trace_path).parent)
+                exporter.export_steps(self._collector.export()["steps"], "collector_steps.json")
+                logger.debug("Collector steps exported (incremental)")
+            except Exception as e:
+                logger.warning(f"Failed to export collector data: {e}")
 
         # 7. Record history
         step_end_time = time.time()
@@ -522,12 +577,14 @@ class Agent:
             ErrorEvent,
             NavigationCompletedEvent,
             NetworkIdleEvent,
+            NetworkRequestCompletedEvent,
         )
 
         self._bus.on(NavigationCompletedEvent, self._on_navigation_completed)
         self._bus.on(NetworkIdleEvent, self._on_network_idle)
         self._bus.on(DOMChangedEvent, self._on_dom_changed)
         self._bus.on(ErrorEvent, self._on_error)
+        self._bus.on(NetworkRequestCompletedEvent, self._on_network_request_completed)
 
         logger.debug("Subscribed to watchdog events")
 
@@ -538,8 +595,10 @@ class Agent:
             ErrorEvent,
             NavigationCompletedEvent,
             NetworkIdleEvent,
+            NetworkRequestCompletedEvent,
         )
 
+        self._bus.off(NetworkRequestCompletedEvent, self._on_network_request_completed)
         self._bus.off(NavigationCompletedEvent, self._on_navigation_completed)
         self._bus.off(NetworkIdleEvent, self._on_network_idle)
         self._bus.off(DOMChangedEvent, self._on_dom_changed)
@@ -562,6 +621,17 @@ class Agent:
     async def _on_error(self, event: Any) -> None:
         """Handle error event."""
         logger.warning(f"Browser error: {event.error_type} - {event.message}")
+
+    async def _on_network_request_completed(self, event: Any) -> None:
+        """Handle network request completed event."""
+        if self._collector:
+            await self._collector.record_network_request(
+                url=event.url,
+                method=event.method,
+                status=event.status,
+                response_type=event.mime_type,
+                params=event.params,
+            )
 
     async def _show_demo_feedback(
         self, action_name: str, action_args: dict, dom_state: Any

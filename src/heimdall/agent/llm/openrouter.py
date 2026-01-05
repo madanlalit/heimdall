@@ -122,6 +122,9 @@ class OpenRouterLLM(BaseLLM):
                 f"{response.usage.total_tokens} total"
             )
 
+        if not response.choices:
+            raise ValueError("LLM response contained no choices")
+
         message = response.choices[0].message
 
         logger.debug(

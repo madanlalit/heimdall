@@ -53,15 +53,13 @@ class ErrorWatchdog(BaseWatchdog):
             session_id = self._session.session_id
 
             # Register console error handler
-            await client.register.Runtime.exceptionThrown(
+            client.register.Runtime.exceptionThrown(
                 self._on_exception,
-                session_id=session_id,
             )
 
             # Register console message handler for errors
-            await client.register.Runtime.consoleAPICalled(
+            client.register.Runtime.consoleAPICalled(
                 self._on_console,
-                session_id=session_id,
             )
 
             self._registered = True
@@ -70,7 +68,7 @@ class ErrorWatchdog(BaseWatchdog):
         except Exception as e:
             logger.warning(f"Could not register error handlers: {e}")
 
-    async def _on_exception(self, params: dict) -> None:
+    async def _on_exception(self, params: dict, *args, **kwargs) -> None:
         """Handle JavaScript exception."""
         exception = params.get("exceptionDetails", {})
         text = exception.get("text", "Unknown error")
@@ -97,7 +95,7 @@ class ErrorWatchdog(BaseWatchdog):
 
         logger.warning(f"JS Exception: {text} at {url}:{line}")
 
-    async def _on_console(self, params: dict) -> None:
+    async def _on_console(self, params: dict, *args, **kwargs) -> None:
         """Handle console messages (looking for errors)."""
         level = params.get("type", "")
 
