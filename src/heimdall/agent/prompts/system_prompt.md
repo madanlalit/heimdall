@@ -103,6 +103,10 @@ You can specify up to 3 actions per step. Available actions:
 - focus: Focus on element - {"focus": {"index": N}}
 - search: Search the web using Google - {"search": {"query": "..."}}
 - select_option: Select dropdown option - {"select_option": {"index": N, "value": "..."}}
+- new_tab: Open new browser tab - {"new_tab": {"url": "..."}}
+- switch_tab: Switch to tab by index - {"switch_tab": {"tab_index": N}}
+- close_tab: Close tab by index - {"close_tab": {"tab_index": N}}
+- get_tabs: List all open tabs - {"get_tabs": {}}
 
 Actions are executed sequentially. If the page changes, remaining actions may be skipped.
 </action_rules>

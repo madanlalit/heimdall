@@ -582,3 +582,137 @@ async def go_forward(session: "BrowserSession") -> ActionResult:
         return ActionResult.ok("Went forward")
     except Exception as e:
         return ActionResult.fail(f"Go forward failed: {e}")
+
+
+# ===== Tab Management Actions =====
+
+
+@action("Open a new browser tab")
+async def new_tab(
+    session: "BrowserSession",
+    url: str = "about:blank",
+) -> ActionResult:
+    """
+    Open a new browser tab.
+
+    Args:
+        url: URL to open in the new tab (default: about:blank)
+    """
+    try:
+        tab_info = await session.create_tab(url)
+        return ActionResult.ok(
+            f"Opened new tab: {url}",
+            tab_id=tab_info.target_id,
+            url=url,
+        )
+    except Exception as e:
+        return ActionResult.fail(f"Failed to open new tab: {e}")
+
+
+@action("Switch to a different browser tab by index")
+async def switch_tab(
+    tab_index: int,
+    session: "BrowserSession",
+) -> ActionResult:
+    """
+    Switch to a different browser tab.
+
+    Args:
+        tab_index: Index of the tab to switch to (0-based, from get_tabs list)
+    """
+    try:
+        tabs = session.get_tabs()
+        if tab_index < 0 or tab_index >= len(tabs):
+            return ActionResult.fail(
+                f"Invalid tab index: {tab_index}. Available tabs: 0-{len(tabs) - 1}"
+            )
+
+        target_tab = tabs[tab_index]
+        await session.switch_tab(target_tab.target_id)
+
+        return ActionResult.ok(
+            f"Switched to tab {tab_index}: {target_tab.url}",
+            tab_index=tab_index,
+            tab_id=target_tab.target_id,
+            url=target_tab.url,
+        )
+    except Exception as e:
+        return ActionResult.fail(f"Failed to switch tab: {e}")
+
+
+@action("Close a browser tab by index")
+async def close_tab(
+    tab_index: int,
+    session: "BrowserSession",
+) -> ActionResult:
+    """
+    Close a browser tab.
+
+    Args:
+        tab_index: Index of the tab to close (0-based, from get_tabs list)
+    """
+    try:
+        tabs = session.get_tabs()
+        if tab_index < 0 or tab_index >= len(tabs):
+            return ActionResult.fail(
+                f"Invalid tab index: {tab_index}. Available tabs: 0-{len(tabs) - 1}"
+            )
+
+        if len(tabs) <= 1:
+            return ActionResult.fail("Cannot close the last tab")
+
+        target_tab = tabs[tab_index]
+        await session.close_tab(target_tab.target_id)
+
+        return ActionResult.ok(
+            f"Closed tab {tab_index}: {target_tab.url}",
+            closed_tab_index=tab_index,
+            closed_url=target_tab.url,
+        )
+    except Exception as e:
+        return ActionResult.fail(f"Failed to close tab: {e}")
+
+
+@action("List all open browser tabs")
+async def get_tabs(
+    session: "BrowserSession",
+) -> ActionResult:
+    """
+    Get a list of all open browser tabs.
+
+    Returns information about each tab including index, URL, title, and active status.
+    """
+    try:
+        # Refresh tab info from browser
+        tabs = await session.refresh_tabs()
+
+        if not tabs:
+            return ActionResult.ok("No tabs open", tabs=[])
+
+        # Format tabs for display
+        tab_list = []
+        for i, tab in enumerate(tabs):
+            tab_list.append(
+                {
+                    "index": i,
+                    "url": tab.url,
+                    "title": tab.title,
+                    "is_active": tab.is_active,
+                    "tab_id": tab.target_id,
+                }
+            )
+
+        # Build message
+        lines = [f"Open tabs ({len(tabs)}):"]
+        for t in tab_list:
+            active_marker = " [ACTIVE]" if t["is_active"] else ""
+            title = t["title"] or "(no title)"
+            lines.append(f"  [{t['index']}] {title} - {t['url']}{active_marker}")
+
+        return ActionResult.ok(
+            "\n".join(lines),
+            tabs=tab_list,
+            count=len(tabs),
+        )
+    except Exception as e:
+        return ActionResult.fail(f"Failed to get tabs: {e}")

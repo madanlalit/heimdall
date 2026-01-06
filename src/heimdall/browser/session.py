@@ -10,12 +10,24 @@ import logging
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TabInfo:
+    """Information about a browser tab."""
+
+    target_id: str
+    url: str = "about:blank"
+    title: str = ""
+    session_id: str | None = None
+    is_active: bool = False
 
 
 class BrowserConfig(BaseModel):
@@ -112,6 +124,9 @@ class BrowserSession(BaseModel):
     _target_id: str | None = PrivateAttr(default=None)
     _connected: bool = PrivateAttr(default=False)
 
+    # Tab tracking
+    _tabs: dict[str, TabInfo] = PrivateAttr(default_factory=dict)
+
     @property
     def is_connected(self) -> bool:
         """Check if session is connected to browser."""
@@ -186,6 +201,17 @@ class BrowserSession(BaseModel):
 
         # Enable domains on this session
         await self._enable_session_domains()
+
+        # Initialize tab tracking
+        self._tabs = {
+            self._target_id: TabInfo(
+                target_id=self._target_id,
+                url="about:blank",
+                title="",
+                session_id=self._session_id,
+                is_active=True,
+            )
+        }
 
         self._connected = True
         logger.info(f"Browser session started (target: {self._target_id[:8]}...)")
@@ -531,6 +557,169 @@ class BrowserSession(BaseModel):
                 return path
 
         raise RuntimeError("Chrome not found. Install Chrome or set executable_path in config.")
+
+    # ===== Tab Management =====
+
+    def get_tabs(self) -> list[TabInfo]:
+        """Get all open tabs."""
+        return list(self._tabs.values())
+
+    def get_current_tab(self) -> TabInfo | None:
+        """Get the currently active tab."""
+        if self._target_id and self._target_id in self._tabs:
+            return self._tabs[self._target_id]
+        return None
+
+    async def create_tab(self, url: str = "about:blank") -> TabInfo:
+        """
+        Create a new browser tab.
+
+        Args:
+            url: URL to open in the new tab
+
+        Returns:
+            TabInfo for the new tab
+        """
+        # Create new target (tab)
+        result = await self._cdp_client.send.Target.createTarget({"url": url})
+        new_target_id = result["targetId"]
+
+        # Attach to the new target
+        attach_result = await self._cdp_client.send.Target.attachToTarget(
+            {"targetId": new_target_id, "flatten": True}
+        )
+        new_session_id = attach_result.get("sessionId")
+
+        # Enable domains on the new session
+        await self._enable_session_domains_for(new_session_id)
+
+        # Create tab info
+        tab_info = TabInfo(
+            target_id=new_target_id,
+            url=url,
+            title="",
+            session_id=new_session_id,
+            is_active=False,
+        )
+        self._tabs[new_target_id] = tab_info
+
+        logger.info(f"Created new tab: {new_target_id[:8]}... -> {url}")
+        return tab_info
+
+    async def switch_tab(self, target_id: str) -> None:
+        """
+        Switch to a different tab.
+
+        Args:
+            target_id: Target ID of the tab to switch to
+        """
+        if target_id not in self._tabs:
+            raise ValueError(f"Tab not found: {target_id}")
+
+        if target_id == self._target_id:
+            logger.debug("Already on this tab")
+            return
+
+        # Activate the target (brings it to front visually)
+        await self._cdp_client.send.Target.activateTarget({"targetId": target_id})
+
+        # Update active state
+        for tab in self._tabs.values():
+            tab.is_active = False
+        self._tabs[target_id].is_active = True
+
+        # Get or create session for the target
+        tab_info = self._tabs[target_id]
+        if not tab_info.session_id:
+            attach_result = await self._cdp_client.send.Target.attachToTarget(
+                {"targetId": target_id, "flatten": True}
+            )
+            tab_info.session_id = attach_result.get("sessionId")
+            await self._enable_session_domains_for(tab_info.session_id)
+
+        # Update current target and session
+        self._target_id = target_id
+        self._session_id = tab_info.session_id
+
+        logger.info(f"Switched to tab: {target_id[:8]}...")
+
+    async def close_tab(self, target_id: str) -> None:
+        """
+        Close a browser tab.
+
+        Args:
+            target_id: Target ID of the tab to close
+        """
+        if target_id not in self._tabs:
+            raise ValueError(f"Tab not found: {target_id}")
+
+        if len(self._tabs) <= 1:
+            raise RuntimeError("Cannot close the last tab")
+
+        was_active = target_id == self._target_id
+
+        # Close the target
+        await self._cdp_client.send.Target.closeTarget({"targetId": target_id})
+
+        # Remove from tracking
+        del self._tabs[target_id]
+
+        logger.info(f"Closed tab: {target_id[:8]}...")
+
+        # If we closed the active tab, switch to another one
+        if was_active and self._tabs:
+            next_tab_id = next(iter(self._tabs.keys()))
+            await self.switch_tab(next_tab_id)
+
+    async def _enable_session_domains_for(self, session_id: str | None) -> None:
+        """Enable CDP domains on a specific session."""
+        if not session_id:
+            return
+
+        await asyncio.gather(
+            self._cdp_client.send.Page.enable(session_id=session_id),
+            self._cdp_client.send.DOM.enable(session_id=session_id),
+            self._cdp_client.send.Network.enable(session_id=session_id),
+            self._cdp_client.send.Runtime.enable(session_id=session_id),
+            self._cdp_client.send.Accessibility.enable(session_id=session_id),
+            self._cdp_client.send.DOMSnapshot.enable(session_id=session_id),
+        )
+
+    async def refresh_tabs(self) -> list[TabInfo]:
+        """
+        Refresh tab information from browser.
+
+        Returns:
+            Updated list of tabs
+        """
+        targets = await self._cdp_client.send.Target.getTargets()
+
+        # Update existing tabs and add new ones
+        seen_ids: set[str] = set()
+        for target in targets.get("targetInfos", []):
+            if target.get("type") == "page":
+                target_id = target["targetId"]
+                seen_ids.add(target_id)
+
+                if target_id in self._tabs:
+                    # Update existing tab info
+                    self._tabs[target_id].url = target.get("url", "")
+                    self._tabs[target_id].title = target.get("title", "")
+                else:
+                    # New tab discovered
+                    self._tabs[target_id] = TabInfo(
+                        target_id=target_id,
+                        url=target.get("url", ""),
+                        title=target.get("title", ""),
+                        is_active=(target_id == self._target_id),
+                    )
+
+        # Remove tabs that no longer exist
+        for target_id in list(self._tabs.keys()):
+            if target_id not in seen_ids:
+                del self._tabs[target_id]
+
+        return self.get_tabs()
 
     # ===== Context Manager Support =====
 
