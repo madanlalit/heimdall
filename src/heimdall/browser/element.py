@@ -490,16 +490,15 @@ class Element:
         # Clear existing content if requested
         if clear:
             await self._clear_field_robust()
+            await asyncio.sleep(0.05)
 
-        # Type each character with proper key event sequence
-        for char in text:
-            if char == "\n":
-                # Handle newlines as Enter key
-                await self._type_special_key("Enter", 13)
-            else:
-                await self._type_char(char)
-
-            await asyncio.sleep(0.018)
+        # Type text using Input.insertText for reliability
+        # This is more reliable than individual key events for most inputs
+        if text:
+            await client.send.Input.insertText(
+                {"text": text},
+                session_id=session_id,
+            )
 
         logger.debug(f"Typed {len(text)} chars into element {self._backend_node_id}")
 
@@ -545,11 +544,16 @@ class Element:
         await asyncio.sleep(0.1)
 
     async def _clear_field_robust(self) -> None:
-        """Clear text field using multiple strategies."""
+        """Clear text field using multiple strategies (browser-use approach).
+
+        Strategy 1: JS-based clearing (handles contenteditable and regular inputs)
+        Strategy 2: Triple-click (clickCount=3) + Delete key
+        Strategy 3: Ctrl/Cmd+A + Backspace (last resort)
+        """
         client = self._session.cdp_client
         session_id = self._session.session_id
 
-        # Strategy 1: JS value setting + dispatchEvent
+        # Strategy 1: JavaScript value/content clearing (most reliable)
         try:
             result = await client.send.DOM.resolveNode(
                 {"backendNodeId": self._backend_node_id},
@@ -562,26 +566,112 @@ class Element:
                         "objectId": object_id,
                         "functionDeclaration": """
                             function() {
-                                try { this.select(); } catch(e) {}
-                                this.value = "";
-                                this.dispatchEvent(new Event("input", { bubbles: true }));
-                                this.dispatchEvent(new Event("change", { bubbles: true }));
-                                return this.value;
+                                // Check if it's a contenteditable element
+                                const hasContentEditable = this.getAttribute('contenteditable') === 'true' ||
+                                                          this.getAttribute('contenteditable') === '' ||
+                                                          this.isContentEditable === true;
+
+                                if (hasContentEditable) {
+                                    // For contenteditable elements, clear all content
+                                    while (this.firstChild) {
+                                        this.removeChild(this.firstChild);
+                                    }
+                                    this.textContent = "";
+                                    this.innerHTML = "";
+
+                                    // Focus and position cursor at the beginning
+                                    this.focus();
+                                    const selection = window.getSelection();
+                                    const range = document.createRange();
+                                    range.setStart(this, 0);
+                                    range.setEnd(this, 0);
+                                    selection.removeAllRanges();
+                                    selection.addRange(range);
+
+                                    // Dispatch events
+                                    this.dispatchEvent(new Event("input", { bubbles: true }));
+                                    this.dispatchEvent(new Event("change", { bubbles: true }));
+
+                                    return {cleared: true, method: 'contenteditable', finalText: this.textContent};
+                                } else if (this.value !== undefined) {
+                                    // For regular inputs with value property
+                                    try {
+                                        this.select();
+                                    } catch (e) {
+                                        // ignore
+                                    }
+                                    this.value = "";
+                                    this.dispatchEvent(new Event("input", { bubbles: true }));
+                                    this.dispatchEvent(new Event("change", { bubbles: true }));
+                                    return {cleared: true, method: 'value', finalText: this.value};
+                                } else {
+                                    return {cleared: false, method: 'none', error: 'Not a supported input type'};
+                                }
                             }
                         """,
                         "returnByValue": True,
                     },
                     session_id=session_id,
                 )
-                current_value = clear_result.get("result", {}).get("value", "")
-                if not current_value:
-                    logger.debug("Cleared field via JS value setting")
-                    return
-                logger.debug(f"JS clear incomplete, field still has: {current_value}")
+
+                clear_info = clear_result.get("result", {}).get("value", {})
+                if clear_info.get("cleared"):
+                    final_text = clear_info.get("finalText", "")
+                    if not final_text or not final_text.strip():
+                        logger.debug(f"Cleared field via JS ({clear_info.get('method')})")
+                        return
+                    logger.debug(f"JS clear incomplete, field has: {final_text}")
         except Exception as e:
             logger.debug(f"JS clear failed: {e}")
 
-        # Strategy 2: Ctrl+A/Cmd+A + Backspace (fallback)
+        # Strategy 2: Triple-click + Delete (single click with clickCount=3)
+        try:
+            bbox = await self.get_bounding_box()
+            if bbox:
+                x, y = int(bbox.center_x), int(bbox.center_y)
+
+                # Single triple-click (clickCount=3 selects all text)
+                await client.send.Input.dispatchMouseEvent(
+                    {
+                        "type": "mousePressed",
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": 3,
+                    },
+                    session_id=session_id,
+                )
+                await client.send.Input.dispatchMouseEvent(
+                    {
+                        "type": "mouseReleased",
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": 3,
+                    },
+                    session_id=session_id,
+                )
+                await asyncio.sleep(0.02)
+
+                # Delete selected text
+                await client.send.Input.dispatchKeyEvent(
+                    {
+                        "type": "keyDown",
+                        "key": "Delete",
+                        "code": "Delete",
+                    },
+                    session_id=session_id,
+                )
+                await client.send.Input.dispatchKeyEvent(
+                    {"type": "keyUp", "key": "Delete", "code": "Delete"},
+                    session_id=session_id,
+                )
+                logger.debug("Cleared field via triple-click + Delete")
+                return
+        except Exception as e:
+            logger.debug(f"Triple-click clear failed: {e}")
+
+        # Strategy 3: Keyboard shortcuts Ctrl/Cmd+A + Backspace (last resort)
         await self._clear_field_keyboard()
 
     async def _clear_field_keyboard(self) -> None:
