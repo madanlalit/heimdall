@@ -52,22 +52,11 @@ class NetworkWatchdog(BaseWatchdog):
             client = self._session.cdp_client
 
             # Register network event handlers
-            client.register.Network.requestWillBeSent(
-                self._on_request_started,
-                session_id=session_id,
-            )
-            client.register.Network.responseReceived(
-                self._on_response_received,
-                session_id=session_id,
-            )
-            client.register.Network.loadingFinished(
-                self._on_request_finished,
-                session_id=session_id,
-            )
-            client.register.Network.loadingFailed(
-                self._on_request_failed,
-                session_id=session_id,
-            )
+            # Note: register handlers are global, not per-session
+            client.register.Network.requestWillBeSent(self._on_request_started)
+            client.register.Network.responseReceived(self._on_response_received)
+            client.register.Network.loadingFinished(self._on_request_finished)
+            client.register.Network.loadingFailed(self._on_request_failed)
 
             self._registered = True
             self._last_activity_time = asyncio.get_event_loop().time()

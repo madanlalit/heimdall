@@ -50,19 +50,13 @@ class ErrorWatchdog(BaseWatchdog):
 
         try:
             client = self._session.cdp_client
-            session_id = self._session.session_id
 
             # Register console error handler
-            client.register.Runtime.exceptionThrown(
-                self._on_exception,
-                session_id=session_id,
-            )
+            # Note: register handlers are global, not per-session
+            client.register.Runtime.exceptionThrown(self._on_exception)
 
             # Register console message handler for errors
-            client.register.Runtime.consoleAPICalled(
-                self._on_console,
-                session_id=session_id,
-            )
+            client.register.Runtime.consoleAPICalled(self._on_console)
 
             self._registered = True
             logger.debug("ErrorWatchdog registered CDP handlers")
