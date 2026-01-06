@@ -234,7 +234,7 @@ async def scroll(
     amount: int = 500,
 ) -> ActionResult:
     """
-    Scroll the page using CDP for reliable native scrolling.
+    Scroll the page with verification and fallback.
 
     Args:
         direction: 'up', 'down', 'left', 'right'
@@ -243,46 +243,80 @@ async def scroll(
     if direction not in ("up", "down", "left", "right"):
         return ActionResult.fail(f"Invalid direction: {direction}")
 
+    # Calculate scroll deltas
+    x_scroll = 0
+    y_scroll = 0
+
+    if direction == "up":
+        y_scroll = -amount
+    elif direction == "down":
+        y_scroll = amount
+    elif direction == "left":
+        x_scroll = -amount
+    elif direction == "right":
+        x_scroll = amount
+
     try:
-        # Get viewport dimensions for centering the scroll gesture
-        layout_metrics = await session.cdp_client.send.Page.getLayoutMetrics(
-            session_id=session.session_id,
-        )
-        viewport_width = layout_metrics["layoutViewport"]["clientWidth"]
-        viewport_height = layout_metrics["layoutViewport"]["clientHeight"]
-
-        # Calculate center of viewport
-        center_x = viewport_width / 2
-        center_y = viewport_height / 2
-
-        # For CDP scroll gesture: positive distance scrolls in that direction
-        # yDistance: positive = scroll UP (content moves down), negative = scroll DOWN
-        # xDistance: positive = scroll LEFT, negative = scroll RIGHT
-        x_distance = 0
-        y_distance = 0
-
-        if direction == "up":
-            y_distance = amount
-        elif direction == "down":
-            y_distance = -amount
-        elif direction == "left":
-            x_distance = amount
-        elif direction == "right":
-            x_distance = -amount
-
-        # Synthesize scroll gesture using CDP
-        await session.cdp_client.send.Input.synthesizeScrollGesture(
-            {
-                "x": center_x,
-                "y": center_y,
-                "xDistance": x_distance,
-                "yDistance": y_distance,
-                "speed": 50000,  # pixels per second (high = near-instant scroll)
-            },
-            session_id=session.session_id,
+        # Get initial scroll position
+        initial_pos = await session.execute_js(
+            "[window.scrollX || window.pageXOffset, window.scrollY || window.pageYOffset]"
         )
 
-        return ActionResult.ok(f"Scrolled {direction} by {amount}px")
+        # Try CDP scroll gesture first (more human-like)
+        cdp_success = False
+        try:
+            layout = await session.cdp_client.send.Page.getLayoutMetrics(
+                session_id=session.session_id
+            )
+            viewport = layout.get("layoutViewport", {})
+            center_x = int(viewport.get("clientWidth", 800) / 2)
+            center_y = int(viewport.get("clientHeight", 600) / 2)
+
+            # CDP uses opposite sign convention for yDistance
+            await session.cdp_client.send.Input.synthesizeScrollGesture(
+                {
+                    "x": center_x,
+                    "y": center_y,
+                    "xDistance": -x_scroll,
+                    "yDistance": -y_scroll,
+                    "speed": 800,  # Smooth scroll speed
+                },
+                session_id=session.session_id,
+            )
+            cdp_success = True
+        except Exception:
+            # CDP failed, will use JS fallback
+            pass
+
+        # Fallback to JavaScript scroll if CDP failed
+        if not cdp_success:
+            await session.execute_js(
+                f"window.scrollBy({{left: {x_scroll}, top: {y_scroll}, behavior: 'smooth'}})"
+            )
+            # Wait for smooth scroll to complete
+            await asyncio.sleep(0.3)
+
+        # Verify scroll happened
+        final_pos = await session.execute_js(
+            "[window.scrollX || window.pageXOffset, window.scrollY || window.pageYOffset]"
+        )
+
+        # Calculate actual scroll distance
+        actual_x = (final_pos[0] if final_pos else 0) - (initial_pos[0] if initial_pos else 0)
+        actual_y = (final_pos[1] if final_pos else 0) - (initial_pos[1] if initial_pos else 0)
+
+        if actual_x == 0 and actual_y == 0:
+            return ActionResult.ok(
+                f"Scrolled {direction} (at boundary or content not scrollable)",
+                at_boundary=True,
+            )
+
+        actual_dist = abs(actual_y) if direction in ("up", "down") else abs(actual_x)
+        return ActionResult.ok(
+            f"Scrolled {direction} by {actual_dist}px",
+            actual_scroll=(actual_x, actual_y),
+        )
+
     except Exception as e:
         return ActionResult.fail(f"Scroll failed: {e}")
 
