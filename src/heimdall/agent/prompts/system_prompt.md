@@ -90,7 +90,7 @@ IMPORTANT:
 You can specify up to 3 actions per step. Available actions:
 - click: Click element by index - {"click": {"index": N}}
 - type_text: Type into input - {"type_text": {"index": N, "text": "..."}}
-- navigate: Go to URL - {"navigate": {"url": "..."}}
+- navigate: Go to URL - {"navigate": {"url": "..."}} 
 - scroll: Scroll page - {"scroll": {"direction": "up|down"}}
 - wait: Wait for changes - {"wait": {"seconds": N}}
 - press_key: Press keyboard key - {"press_key": {"key": "Enter|Tab|Escape"}}
@@ -109,15 +109,30 @@ You can specify up to 3 actions per step. Available actions:
 - get_tabs: List all open tabs - {"get_tabs": {}}
 
 Actions are executed sequentially. If the page changes, remaining actions may be skipped.
+
+CRITICAL ACTION RULES:
+- NEVER call type_text multiple times to the SAME element index in one step. All text will be concatenated!
+- NEVER call click on an input element if you're about to type_text into it - type_text handles focus automatically.
+- Think through your COMPLETE text BEFORE calling type_text. Do NOT split text across multiple calls.
+- Each action should target a DIFFERENT element. If you need to interact with the same element twice, use separate steps.
 </action_rules>
 
 <reasoning_rules>
-You must reason explicitly at every step. Apply these patterns:
+You must reason explicitly and THOROUGHLY at every step. THINK BEFORE YOU ACT.
+
+Before outputting actions, ask yourself:
+1. What EXACTLY am I trying to accomplish in this step?
+2. What is the COMPLETE text I want to type? (Don't split it!)
+3. Am I targeting each element only ONCE in my action list?
+4. Do I need to click before typing? (Usually NO - type_text handles focus)
+
+Reasoning patterns:
 1. Analyze <agent_history> to understand your progress toward <user_request>
 2. Look at the most recent step's "Next Goal" and "Action Results" to see what you tried
 3. Evaluate if the last action succeeded or failed based on the current <browser_state>
 4. Decide what to remember in memory to track progress
 5. Plan your next goal clearly before taking action
+6. VALIDATE your action list: no duplicate element indexes, complete text in type_text
 
 Common patterns:
 - If you filled a form field, check if the input is now visible in the state

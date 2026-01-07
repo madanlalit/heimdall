@@ -495,6 +495,9 @@ class Element:
         # Type text using Input.insertText for reliability
         # This is more reliable than individual key events for most inputs
         if text:
+            logger.info(
+                f"Typing into element {self._backend_node_id}: '{text[:30]}...' (clear={clear})"
+            )
             await client.send.Input.insertText(
                 {"text": text},
                 session_id=session_id,
@@ -544,16 +547,78 @@ class Element:
         await asyncio.sleep(0.1)
 
     async def _clear_field_robust(self) -> None:
-        """Clear text field using multiple strategies (browser-use approach).
+        """Clear text field using multiple strategies.
 
-        Strategy 1: JS-based clearing (handles contenteditable and regular inputs)
+        Strategy 1: Ctrl/Cmd+A + Backspace (most reliable for React/contenteditable)
         Strategy 2: Triple-click (clickCount=3) + Delete key
-        Strategy 3: Ctrl/Cmd+A + Backspace (last resort)
+        Strategy 3: JS-based clearing (fallback for regular inputs)
+
+        IMPORTANT: Keyboard-based clearing is preferred because it properly
+        syncs with React's internal state, unlike JS DOM manipulation which
+        React may override during re-render.
         """
         client = self._session.cdp_client
         session_id = self._session.session_id
 
-        # Strategy 1: JavaScript value/content clearing (most reliable)
+        # Strategy 1: Keyboard shortcuts Ctrl/Cmd+A + Backspace (best for React)
+        # This is now the PRIMARY strategy because it properly syncs with
+        # React/contenteditable elements that maintain their own state
+        try:
+            await self._clear_field_keyboard()
+            await asyncio.sleep(0.05)  # Give React time to sync
+            logger.info("Cleared field via keyboard shortcuts (Ctrl+A + Backspace)")
+            return
+        except Exception as e:
+            logger.debug(f"Keyboard clear failed: {e}")
+
+        # Strategy 2: Triple-click + Delete
+        try:
+            bbox = await self.get_bounding_box()
+            if bbox:
+                x, y = int(bbox.center_x), int(bbox.center_y)
+
+                # Single triple-click (clickCount=3 selects all text)
+                await client.send.Input.dispatchMouseEvent(
+                    {
+                        "type": "mousePressed",
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": 3,
+                    },
+                    session_id=session_id,
+                )
+                await client.send.Input.dispatchMouseEvent(
+                    {
+                        "type": "mouseReleased",
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": 3,
+                    },
+                    session_id=session_id,
+                )
+                await asyncio.sleep(0.02)
+
+                # Delete selected text
+                await client.send.Input.dispatchKeyEvent(
+                    {
+                        "type": "keyDown",
+                        "key": "Delete",
+                        "code": "Delete",
+                    },
+                    session_id=session_id,
+                )
+                await client.send.Input.dispatchKeyEvent(
+                    {"type": "keyUp", "key": "Delete", "code": "Delete"},
+                    session_id=session_id,
+                )
+                logger.info("Cleared field via triple-click + Delete")
+                return
+        except Exception as e:
+            logger.debug(f"Triple-click clear failed: {e}")
+
+        # Strategy 3: JavaScript value/content clearing (fallback for regular inputs)
         try:
             result = await client.send.DOM.resolveNode(
                 {"backendNodeId": self._backend_node_id},
@@ -618,61 +683,13 @@ class Element:
                 if clear_info.get("cleared"):
                     final_text = clear_info.get("finalText", "")
                     if not final_text or not final_text.strip():
-                        logger.debug(f"Cleared field via JS ({clear_info.get('method')})")
+                        logger.info(f"Cleared field via JS ({clear_info.get('method')})")
                         return
-                    logger.debug(f"JS clear incomplete, field has: {final_text}")
+                    logger.warning(f"JS clear incomplete, field still has: '{final_text[:50]}'")
+                else:
+                    logger.warning(f"JS clear failed: {clear_info.get('error', 'unknown')}")
         except Exception as e:
-            logger.debug(f"JS clear failed: {e}")
-
-        # Strategy 2: Triple-click + Delete (single click with clickCount=3)
-        try:
-            bbox = await self.get_bounding_box()
-            if bbox:
-                x, y = int(bbox.center_x), int(bbox.center_y)
-
-                # Single triple-click (clickCount=3 selects all text)
-                await client.send.Input.dispatchMouseEvent(
-                    {
-                        "type": "mousePressed",
-                        "x": x,
-                        "y": y,
-                        "button": "left",
-                        "clickCount": 3,
-                    },
-                    session_id=session_id,
-                )
-                await client.send.Input.dispatchMouseEvent(
-                    {
-                        "type": "mouseReleased",
-                        "x": x,
-                        "y": y,
-                        "button": "left",
-                        "clickCount": 3,
-                    },
-                    session_id=session_id,
-                )
-                await asyncio.sleep(0.02)
-
-                # Delete selected text
-                await client.send.Input.dispatchKeyEvent(
-                    {
-                        "type": "keyDown",
-                        "key": "Delete",
-                        "code": "Delete",
-                    },
-                    session_id=session_id,
-                )
-                await client.send.Input.dispatchKeyEvent(
-                    {"type": "keyUp", "key": "Delete", "code": "Delete"},
-                    session_id=session_id,
-                )
-                logger.debug("Cleared field via triple-click + Delete")
-                return
-        except Exception as e:
-            logger.debug(f"Triple-click clear failed: {e}")
-
-        # Strategy 3: Keyboard shortcuts Ctrl/Cmd+A + Backspace (last resort)
-        await self._clear_field_keyboard()
+            logger.warning(f"JS clear exception: {e}")
 
     async def _clear_field_keyboard(self) -> None:
         """Clear field using keyboard shortcuts (Ctrl+A + Backspace)."""
