@@ -9,7 +9,9 @@ import asyncio
 import base64
 import json
 import logging
+import signal
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -76,6 +78,10 @@ class AgentConfig(BaseModel):
     save_trace_path: str | Path | None = None
     capture_screenshots: bool = False
     use_collector: bool = False
+
+    # State persistence for pause/resume
+    workspace_path: str | Path | None = None
+    enable_persistence: bool = True
 
 
 class AgentState(BaseModel):
@@ -159,11 +165,31 @@ class Agent:
 
         self._filesystem = FileSystem()
 
+        # Pause/resume state
+        self._paused = False
+        self._pause_requested = False
+        self._session_id = str(uuid.uuid4())[:8]
+        self._task: str = ""  # Store task for state persistence
+        self._resume_event = asyncio.Event()
+
+        # Initialize state manager for persistence
+        self._state_manager = None
+        if self._config.enable_persistence and self._config.workspace_path:
+            from heimdall.persistence import StateManager
+
+            self._state_manager = StateManager(Path(self._config.workspace_path))
+            logger.info(f"State persistence enabled - workspace: {self._config.workspace_path}")
+
         self._subscribe_to_events()
 
     async def run(self, task: str) -> AgentHistoryList:
         """
         Run agent to complete a task.
+
+        Supports interactive pause/resume:
+        - Ctrl+C: Pause execution and save state
+        - Enter: Resume execution
+        - Ctrl+C again (while paused): Exit completely
 
         Args:
             task: Natural language task description
@@ -172,16 +198,88 @@ class Agent:
             Final agent state
         """
         logger.info(f"Starting task: {task[:80]}")
-        self._state = AgentState()
-        self._history = AgentHistoryList()
+        self._task = task
+
+        # Try to resume from state if available
+        restored = False
+        if (
+            self._config.enable_persistence
+            and self._state_manager
+            and self._state_manager.has_saved_state
+        ):
+            try:
+                persisted = await self._state_manager.load_state()
+                if persisted and persisted.task == task and not persisted.done:
+                    self._session_id = persisted.session_id
+                    self._state = AgentState(
+                        step_count=persisted.step_count,
+                        done=persisted.done,
+                        success=persisted.success,
+                        error=persisted.error,
+                        consecutive_failures=persisted.consecutive_failures,
+                        total_failures=persisted.total_failures,
+                        previous_url=persisted.last_url,
+                    )
+                    self._history = AgentHistoryList()
+                    for h in persisted.history:
+                        self._history.add(AgentHistory.model_validate(h))
+
+                    restored = True
+                    logger.info(
+                        f"Resumed session {self._session_id} at step {self._state.step_count}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to resume state: {e}")
+
+        if not restored:
+            self._state = AgentState()
+            self._history = AgentHistoryList()
+
+        self._paused = False
+        self._pause_requested = False
+        self._exit_requested = False
 
         self._filesystem.update_todo([f"Complete: {task[:100]}"])
 
         for w in self._watchdogs.values():
             await w.start()
 
+        # Set up SIGINT handler for pause/resume using asyncio (safer for async code)
+        loop = asyncio.get_running_loop()
+
+        def sigint_handler():
+            if self._paused:
+                # Already paused - request exit
+                logger.info("Second Ctrl+C received - will exit...")
+                self._exit_requested = True
+                self._resume_event.set()
+            else:
+                # First Ctrl+C - request pause
+                self._pause_requested = True
+                print()  # New line after ^C
+                logger.info("Pause requested... will pause after current step")
+
+        # Add signal handler (asyncio-compatible, won't interrupt async operations)
+        try:
+            loop.add_signal_handler(signal.SIGINT, sigint_handler)
+            signal_handler_installed = True
+        except NotImplementedError:
+            # Windows doesn't support add_signal_handler
+            signal_handler_installed = False
+            signal.signal(signal.SIGINT, lambda s, f: sigint_handler())
+
         try:
             while not self._should_stop():
+                # Check for pause request
+                if self._pause_requested and not self._paused:
+                    await self._handle_pause()
+                    self._pause_requested = False
+
+                    # Check if exit was requested during pause
+                    if self._exit_requested:
+                        logger.info("Exiting...")
+                        break
+
                 await self._execute_step(task)
 
             self._state.success = self._state.done and not self._state.error
@@ -192,6 +290,13 @@ class Agent:
             self._state.success = False
 
         finally:
+            # Remove signal handler
+            if signal_handler_installed:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    loop.remove_signal_handler(signal.SIGINT)
+
             for w in self._watchdogs.values():
                 await w.stop()
 
@@ -223,6 +328,97 @@ class Agent:
         logger.info(f"Task complete: success={self._state.success}")
 
         return self._history
+
+    async def _handle_pause(self) -> None:
+        """Handle pause request - save state and wait for resume."""
+        from rich.console import Console
+
+        console = Console()
+
+        self._paused = True
+        await self._save_state(paused=True)
+
+        console.print("\n[bold yellow]⏸️  Execution paused[/bold yellow]")
+        console.print(f"   Step: {self._state.step_count}/{self._config.max_steps}")
+        console.print(f"   Session: {self._session_id}")
+
+        if self._state_manager:
+            console.print(
+                f"   State saved to: {self._state_manager.workspace}/.heimdall_state.json"
+            )
+
+        console.print(
+            "\n   Press [bold green]Enter[/bold green] to resume, "
+            "or [bold red]Ctrl+C[/bold red] to exit...\n"
+        )
+
+        # Clear event from previous runs
+        self._resume_event.clear()
+
+        # Define input reader that sets the event
+        loop = asyncio.get_running_loop()
+
+        def read_input():
+            try:
+                input()
+            except EOFError:
+                pass
+            finally:
+                loop.call_soon_threadsafe(self._resume_event.set)
+
+        # Start input thread
+        loop.run_in_executor(None, read_input)
+
+        # Wait for either Input (Enter) or Signal (Ctrl+C setting the event)
+        await self._resume_event.wait()
+
+        if self._exit_requested:
+            # Loop in run() will handle the break
+            pass
+        else:
+            console.print("[bold green]▶️  Resuming execution...[/bold green]\n")
+            self._paused = False
+
+    async def _save_state(self, paused: bool = False) -> None:
+        """Save current agent state for persistence."""
+        if not self._state_manager:
+            return
+
+        try:
+            from heimdall.persistence import PersistedState, TaskProgress
+
+            # Serialize history
+            history_data = [h.to_dict() for h in self._history.history]
+
+            # Build progress from agent output
+            last_output = self._history.last_output()
+            progress = TaskProgress(
+                completed=[],
+                pending=last_output.todo if last_output and last_output.todo else [],
+                current=last_output.next_goal if last_output else "",
+            )
+
+            state = PersistedState(
+                session_id=self._session_id,
+                task=self._task,
+                step_count=self._state.step_count,
+                done=self._state.done,
+                success=self._state.success,
+                error=self._state.error,
+                consecutive_failures=self._state.consecutive_failures,
+                total_failures=self._state.total_failures,
+                last_url=self._state.previous_url or "",
+                history=history_data,
+                progress=progress,
+                paused=paused,
+                paused_at=datetime.now().isoformat() if paused else None,
+            )
+
+            await self._state_manager.save_state(state)
+            logger.debug(f"State saved: step={state.step_count}, paused={paused}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save state: {e}")
 
     async def _execute_step(self, task: str) -> None:
         """Execute one agent step with structured output."""

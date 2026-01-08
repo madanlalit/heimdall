@@ -134,6 +134,9 @@ def run(
                     console.print(f"Error: {error}")
             raise typer.Exit(1)
 
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Execution interrupted by user[/yellow]")
+
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1) from None
@@ -221,6 +224,8 @@ async def _run_agent(
                 save_trace_path=save_trace,
                 capture_screenshots=capture_screenshots,
                 use_collector=use_collector,
+                workspace_path=output_dir,
+                enable_persistence=True,
             ),
         )
 

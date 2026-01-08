@@ -365,6 +365,9 @@ class BrowserSession(BaseModel):
             chrome_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # Start Chrome in its own process group so it doesn't receive SIGINT
+            # when user presses Ctrl+C (for pause/resume functionality)
+            start_new_session=True,
         )
 
         ws_url = await self._wait_for_cdp(port)
