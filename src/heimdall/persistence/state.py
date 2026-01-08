@@ -23,14 +23,40 @@ class TaskProgress(BaseModel):
 
 
 class PersistedState(BaseModel):
-    """Persistable agent state."""
+    """Persistable agent state for pause/resume functionality."""
 
+    # Session identification
+    session_id: str = ""
+
+    # Task state
     task: str = ""
     step_count: int = 0
     done: bool = False
-    actions_taken: list[dict] = Field(default_factory=list)
-    progress: TaskProgress = Field(default_factory=TaskProgress)
+    success: bool = False
+    error: str | None = None
+
+    # Execution state
+    consecutive_failures: int = 0
+    total_failures: int = 0
+
+    # Browser state
     last_url: str = ""
+
+    # History (serialized AgentHistoryList)
+    history: list[dict] = Field(default_factory=list)
+
+    # Actions taken (legacy compatibility)
+    actions_taken: list[dict] = Field(default_factory=list)
+
+    # Progress tracking
+    progress: TaskProgress = Field(default_factory=TaskProgress)
+
+    # Pause state
+    paused: bool = False
+
+    # Timestamps
+    started_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    paused_at: str | None = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
