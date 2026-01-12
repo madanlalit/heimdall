@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from heimdall.agent.llm import AnthropicLLM, OpenAILLM
 from heimdall.config import (
     DEFAULT_ANTHROPIC_MODEL,
+    DEFAULT_GOOGLE_MODEL,
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
 )
@@ -22,7 +23,7 @@ def create_llm_client(provider: str, model: str | None = None) -> "BaseLLM":
     Create LLM client based on provider and model.
 
     Args:
-        provider: 'openai', 'anthropic', or 'openrouter'
+        provider: 'openai', 'anthropic', 'openrouter', or 'google'
         model: Optional model name override
 
     Returns:
@@ -35,5 +36,9 @@ def create_llm_client(provider: str, model: str | None = None) -> "BaseLLM":
         from heimdall.agent.llm import OpenRouterLLM
 
         return OpenRouterLLM(model=model or DEFAULT_OPENROUTER_MODEL)
+    elif provider == "google":
+        from heimdall.agent.llm import GoogleLLM
+
+        return GoogleLLM(model=model or DEFAULT_GOOGLE_MODEL)
     else:
         return OpenAILLM(model=model or DEFAULT_OPENAI_MODEL)

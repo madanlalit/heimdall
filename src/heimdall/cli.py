@@ -32,7 +32,7 @@ def run(
     output: str = typer.Option("./output", "--output", "-o", help="Output directory"),
     headed: bool = typer.Option(False, "--headed", help="Run with visible browser"),
     llm: str = typer.Option(
-        "openrouter", "--llm", "-l", help="LLM provider (openrouter/openai/anthropic)"
+        "openrouter", "--llm", "-l", help="LLM provider (openrouter/openai/anthropic/google)"
     ),
     model: str = typer.Option(None, "--model", "-m", help="LLM model name"),
     demo: bool = typer.Option(False, "--demo", help="Enable demo mode with visual feedback"),
