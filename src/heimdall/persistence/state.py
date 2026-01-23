@@ -172,8 +172,8 @@ class StateManager:
         return self._state_file.exists()
 
     @staticmethod
-    def list_available_runs(workspace: Path | str) -> list[tuple[str, PersistedState]]:
-        """List all available paused runs in the workspace.
+    def list_available_runs() -> list[tuple[str, PersistedState]]:
+        """List all available paused runs.
 
         Returns:
             List of (run_id, state) tuples for all paused sessions
