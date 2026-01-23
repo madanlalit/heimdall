@@ -64,19 +64,31 @@ class StateManager:
     """
     Manages persistent state for resumable tasks.
 
-    Files created in workspace:
-    - .heimdall_state.json - Serialized agent state
-    - todo.md - Human-readable progress
-    - results.md - Step results log
+    Each run gets a unique directory in .heimdall/runs/{run_id}/ at project root.
+    This allows multiple paused sessions to coexist.
+
+    Files created in .heimdall:
+    - runs/{run_id}/state.json - Serialized agent state per run
+    - runs/{run_id}/todo.md - Human-readable progress
+    - runs/{run_id}/results.md - Step results log
     """
 
-    def __init__(self, workspace: Path | str):
+    def __init__(self, workspace: Path | str, run_id: str):
         self._workspace = Path(workspace)
         self._workspace.mkdir(parents=True, exist_ok=True)
+        self._run_id = run_id
 
-        self._state_file = self._workspace / ".heimdall_state.json"
-        self._todo_file = self._workspace / "todo.md"
-        self._results_file = self._workspace / "results.md"
+        # Use .heimdall at cwd (matches pattern in agent/filesystem.py)
+        heimdall_root = Path.cwd() / ".heimdall"
+
+        # Create run-specific directory
+        self._heimdall_dir = heimdall_root / "runs" / run_id
+        self._heimdall_dir.mkdir(parents=True, exist_ok=True)
+
+        # State files in run-specific directory
+        self._state_file = self._heimdall_dir / "state.json"
+        self._todo_file = self._heimdall_dir / "todo.md"
+        self._results_file = self._heimdall_dir / "results.md"
 
     async def save_state(self, state: PersistedState) -> None:
         """Save agent state to file."""
@@ -158,3 +170,37 @@ class StateManager:
     def has_saved_state(self) -> bool:
         """Check if saved state exists."""
         return self._state_file.exists()
+
+    @staticmethod
+    def list_available_runs(workspace: Path | str) -> list[tuple[str, PersistedState]]:
+        """List all available paused runs in the workspace.
+
+        Returns:
+            List of (run_id, state) tuples for all paused sessions
+        """
+        # Use .heimdall at cwd (matches pattern in filesystem.py)
+        runs_dir = Path.cwd() / ".heimdall" / "runs"
+        if not runs_dir.exists():
+            return []
+
+        runs = []
+        for run_dir in runs_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+
+            state_file = run_dir / "state.json"
+            if not state_file.exists():
+                continue
+
+            try:
+                run_id = run_dir.name
+                data = json.loads(state_file.read_text())
+                state = PersistedState.model_validate(data)
+
+                # Only include paused, incomplete runs
+                if state.paused and not state.done:
+                    runs.append((run_id, state))
+            except Exception as e:
+                logger.warning(f"Failed to load state from {state_file}: {e}")
+
+        return runs

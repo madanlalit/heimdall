@@ -82,6 +82,7 @@ class AgentConfig(BaseModel):
     # State persistence for pause/resume
     workspace_path: str | Path | None = None
     enable_persistence: bool = True
+    run_id: str | None = None  # Specific run ID to resume (if provided)
 
 
 class AgentState(BaseModel):
@@ -174,10 +175,16 @@ class Agent:
 
         # Initialize state manager for persistence
         self._state_manager = None
+        self._run_id: str | None = None
         if self._config.enable_persistence and self._config.workspace_path:
             from heimdall.persistence import StateManager
 
-            self._state_manager = StateManager(Path(self._config.workspace_path))
+            # Use provided run_id or generate new one
+            self._run_id = self._config.run_id or str(uuid.uuid4())[:8]
+            self._state_manager = StateManager(
+                Path(self._config.workspace_path), run_id=self._run_id
+            )
+            logger.info(f"Run ID: {self._run_id}")
             logger.info(f"State persistence enabled - workspace: {self._config.workspace_path}")
 
         self._subscribe_to_events()
@@ -200,16 +207,37 @@ class Agent:
         logger.info(f"Starting task: {task[:80]}")
         self._task = task
 
-        # Try to resume from state if available
+        # Try to resume from state if run_id was provided
         restored = False
         if (
             self._config.enable_persistence
+            and self._config.run_id  # Only resume if specific run_id provided
             and self._state_manager
             and self._state_manager.has_saved_state
         ):
             try:
                 persisted = await self._state_manager.load_state()
-                if persisted and persisted.task == task and not persisted.done:
+
+                # Check various conditions and provide specific error messages
+                if persisted and persisted.done:
+                    logger.warning(
+                        f"Run {self._run_id} is already completed. "
+                        f"Please start a new run without --run-id flag."
+                    )
+                elif persisted and persisted.task != task:
+                    logger.warning(
+                        f"Run {self._run_id} has a different task. "
+                        f"The saved task does not match the current task."
+                    )
+                elif persisted and not persisted.paused:
+                    logger.warning(
+                        f"Run {self._run_id} was not paused (possibly crashed). "
+                        f"Cannot resume non-paused sessions."
+                    )
+                elif (
+                    persisted and persisted.task == task and not persisted.done and persisted.paused
+                ):
+                    # Valid resume - restore state
                     self._session_id = persisted.session_id
                     self._state = AgentState(
                         step_count=persisted.step_count,
@@ -226,14 +254,17 @@ class Agent:
 
                     restored = True
                     logger.info(
-                        f"Resumed session {self._session_id} at step {self._state.step_count}"
+                        f"Resumed run {self._run_id} (session {self._session_id}) "
+                        f"at step {self._state.step_count}"
                     )
             except Exception as e:
-                logger.warning(f"Failed to resume state: {e}")
+                logger.warning(f"Failed to resume run {self._run_id}: {e}")
 
         if not restored:
             self._state = AgentState()
             self._history = AgentHistoryList()
+            if self._run_id:
+                logger.info(f"Started new run: {self._run_id}")
 
         self._paused = False
         self._pause_requested = False

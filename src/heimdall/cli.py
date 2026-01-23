@@ -70,6 +70,11 @@ def run(
         "--collector",
         help="Enable detailed step collector for export (requires --save-trace)",
     ),
+    run_id: str | None = typer.Option(
+        None,
+        "--run-id",
+        help="Resume from a specific paused run ID. Use without this flag to start a fresh run.",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ) -> None:
     """Run browser automation task."""
@@ -119,6 +124,7 @@ def run(
                 save_trace=save_trace,
                 capture_screenshots=capture_screenshots,
                 use_collector=collector,
+                run_id=run_id,
             )
         )
 
@@ -157,6 +163,7 @@ async def _run_agent(
     save_trace: str | None = None,
     capture_screenshots: bool = False,
     use_collector: bool = False,
+    run_id: str | None = None,
 ):
     """Run the agent with given configuration."""
     from heimdall.agent import Agent, AgentConfig
@@ -226,6 +233,7 @@ async def _run_agent(
                 use_collector=use_collector,
                 workspace_path=output_dir,
                 enable_persistence=True,
+                run_id=run_id,
             ),
         )
 
