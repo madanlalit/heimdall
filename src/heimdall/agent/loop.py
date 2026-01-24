@@ -426,7 +426,7 @@ class Agent:
             progress = TaskProgress(
                 completed=[],
                 pending=last_output.todo if last_output and last_output.todo else [],
-                current=last_output.next_goal if last_output else "",
+                current=last_output.next_goal or "" if last_output else "",
             )
 
             state = PersistedState(

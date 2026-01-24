@@ -52,10 +52,10 @@ dev = [
 heimdall = "heimdall.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/heimdall-automation/heimdall"
-Documentation = "https://github.com/heimdall-automation/heimdall#readme"
-Repository = "https://github.com/heimdall-automation/heimdall"
-Issues = "https://github.com/heimdall-automation/heimdall/issues"
+Homepage = "https://github.com/madanlalit/heimdall"
+Documentation = "https://github.com/madanlalit/heimdall#readme"
+Repository = "https://github.com/madanlalit/heimdall"
+Issues = "https://github.com/madanlalit/heimdall/issues"
 
 [build-system]
 requires = ["hatchling"]
