@@ -128,7 +128,7 @@ class BrowserOptions(BaseModel):
 class LLMOptions(BaseModel):
     """LLM configuration options."""
 
-    provider: Literal["openai", "anthropic"] = "openai"
+    provider: Literal["openai", "anthropic", "openrouter", "groq"] = "openai"
     model: str = "gpt-4"
     api_key: str | None = None
 
