@@ -8,10 +8,13 @@ Usage:
 
 import asyncio
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from dotenv import load_dotenv
 from rich.console import Console
+
+from heimdall.config import LLMProvider
 
 # Load .env file if present
 load_dotenv()
@@ -27,55 +30,80 @@ console = Console()
 
 @app.command()
 def run(
-    task: str = typer.Argument(..., help="Task description or path to YAML file"),
-    url: str | None = typer.Option(None, "--url", "-u", help="Starting URL"),
-    output: str = typer.Option("./output", "--output", "-o", help="Output directory"),
-    headed: bool = typer.Option(False, "--headed", help="Run with visible browser"),
-    llm: str = typer.Option(
-        "openrouter", "--llm", "-l", help="LLM provider (openrouter/openai/anthropic/groq)"
-    ),
-    model: str = typer.Option(None, "--model", "-m", help="LLM model name"),
-    demo: bool = typer.Option(False, "--demo", help="Enable demo mode with visual feedback"),
-    vision: bool = typer.Option(
-        False, "--vision", help="Send screenshots to LLM for better context"
-    ),
-    user_data_dir: str | None = typer.Option(
-        None,
-        "--user-data-dir",
-        help="Chrome user data directory (e.g., ~/Library/Application Support/Google/Chrome)",
-    ),
-    profile_directory: str = typer.Option(
-        "Default",
-        "--profile-directory",
-        help="Chrome profile name (Default, Profile 1, etc.)",
-    ),
-    instructions: str | None = typer.Option(
-        None,
-        "--instructions",
-        "-i",
-        help="Path to file with custom instructions to extend the system prompt",
-    ),
-    save_trace: str | None = typer.Option(
-        None,
-        "--save-trace",
-        help="Save execution trace to JSON file (e.g., trace.json)",
-    ),
-    capture_screenshots: bool = typer.Option(
-        False,
-        "--capture-screenshots",
-        help="Capture screenshots at each step (requires --save-trace)",
-    ),
-    collector: bool = typer.Option(
-        False,
-        "--collector",
-        help="Enable detailed step collector for export (requires --save-trace)",
-    ),
-    run_id: str | None = typer.Option(
-        None,
-        "--run-id",
-        help="Resume from a specific paused run ID. Use without this flag to start a fresh run.",
-    ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    task: Annotated[str, typer.Argument(help="Task description or path to YAML file")],
+    url: Annotated[str | None, typer.Option("--url", "-u", help="Starting URL")] = None,
+    output: Annotated[str, typer.Option("--output", "-o", help="Output directory")] = "./output",
+    headed: Annotated[bool, typer.Option("--headed", help="Run with visible browser")] = False,
+    llm: Annotated[
+        LLMProvider,
+        typer.Option(
+            "--llm",
+            "-l",
+            help="LLM provider (openrouter/openai/anthropic/groq)",
+        ),
+    ] = "openrouter",
+    model: Annotated[str | None, typer.Option("--model", "-m", help="LLM model name")] = None,
+    demo: Annotated[
+        bool, typer.Option("--demo", help="Enable demo mode with visual feedback")
+    ] = False,
+    vision: Annotated[
+        bool, typer.Option("--vision", help="Send screenshots to LLM for better context")
+    ] = False,
+    user_data_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--user-data-dir",
+            help="Chrome user data directory (e.g., ~/Library/Application Support/Google/Chrome)",
+        ),
+    ] = None,
+    profile_directory: Annotated[
+        str,
+        typer.Option(
+            "--profile-directory",
+            help="Chrome profile name (Default, Profile 1, etc.)",
+        ),
+    ] = "Default",
+    instructions: Annotated[
+        str | None,
+        typer.Option(
+            "--instructions",
+            "-i",
+            help="Path to file with custom instructions to extend the system prompt",
+        ),
+    ] = None,
+    save_trace: Annotated[
+        str | None,
+        typer.Option(
+            "--save-trace",
+            help="Save execution trace to JSON file (e.g., trace.json)",
+        ),
+    ] = None,
+    capture_screenshots: Annotated[
+        bool,
+        typer.Option(
+            "--capture-screenshots",
+            help="Capture screenshots at each step (requires --save-trace)",
+        ),
+    ] = False,
+    collector: Annotated[
+        bool,
+        typer.Option(
+            "--collector",
+            help="Enable detailed step collector for export (requires --save-trace)",
+        ),
+    ] = False,
+    run_id: Annotated[
+        str | None,
+        typer.Option(
+            "--run-id",
+            help=(
+                "Resume from a specific paused run ID. Use without this flag to start a fresh run."
+            ),
+        ),
+    ] = None,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="Enable verbose logging")
+    ] = False,
 ) -> None:
     """Run browser automation task."""
     from typing import Literal
@@ -153,7 +181,7 @@ async def _run_agent(
     url: str | None,
     output_dir: str,
     headless: bool,
-    llm_provider: str,
+    llm_provider: LLMProvider,
     model: str | None,
     demo_mode: bool,
     use_vision: bool = False,
@@ -277,7 +305,7 @@ def version() -> None:
 
 @app.command()
 def init(
-    directory: str = typer.Argument(".", help="Directory to initialize"),
+    directory: Annotated[str, typer.Argument(help="Directory to initialize")] = ".",
 ) -> None:
     """Initialize Heimdall workspace."""
     workspace = Path(directory)
