@@ -1,0 +1,83 @@
+"""
+Groq LLM Client - Groq API integration for Heimdall.
+
+Groq provides high-speed inference using their LPU hardware.
+Uses OpenAI-compatible API.
+"""
+
+import logging
+from typing import Any
+
+from heimdall.agent.llm.base import BaseLLM
+
+logger = logging.getLogger(__name__)
+
+
+class GroqLLM(BaseLLM):
+    """Groq API client for chat completions with tool calling."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = "llama-3.3-70b-versatile",
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ):
+        import os
+
+        from groq import AsyncGroq
+
+        self._client = AsyncGroq(
+            api_key=api_key or os.getenv("GROQ_API_KEY"),
+        )
+        self._model = model
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+
+    async def chat_completion(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str = "auto",
+        **kwargs,
+    ) -> dict:
+        """Generate chat completion with optional tool calling."""
+        params: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": self._temperature,
+            "max_tokens": self._max_tokens,
+        }
+
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = tool_choice
+
+        params.update(kwargs)
+
+        response = await self._client.chat.completions.create(**params)
+
+        message = response.choices[0].message
+
+        result: dict[str, Any] = {
+            "content": message.content or "",
+        }
+
+        if message.tool_calls:
+            result["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message.tool_calls
+            ]
+
+        return result
+
+    async def close(self) -> None:
+        """Close client."""
+        await self._client.close()
