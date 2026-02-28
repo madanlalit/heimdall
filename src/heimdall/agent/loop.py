@@ -142,17 +142,26 @@ class Agent:
 
         # Initialize collector for detailed step capture
         self._collector = None
-        if self._config.use_collector and self._config.save_trace_path:
+        self._collector_output_dir: Path | None = None
+        if self._config.use_collector:
             from heimdall.collector import Collector
 
-            output_dir = Path(self._config.save_trace_path).parent
+            # Resolve output directory: prefer save_trace parent, then workspace, then ./output
+            if self._config.save_trace_path:
+                self._collector_output_dir = Path(self._config.save_trace_path).parent
+            elif self._config.workspace_path:
+                self._collector_output_dir = Path(self._config.workspace_path)
+            else:
+                self._collector_output_dir = Path("./output")
+
+            self._collector_output_dir.mkdir(parents=True, exist_ok=True)
             self._collector = Collector(
                 session,
-                output_dir,
-                capture_screenshots=self._config.capture_screenshots or self._config.use_collector,
+                self._collector_output_dir,
+                capture_screenshots=self._config.capture_screenshots,
                 capture_network=True,
             )
-            logger.info("Collector enabled - detailed step capture active")
+            logger.info(f"Collector enabled — output: {self._collector_output_dir}")
 
         # Initialize watchdogs
         self._watchdogs = {
@@ -342,17 +351,20 @@ class Agent:
                     logger.error(f"Failed to save trace: {e}")
 
             # Export collector data (success or failure/interrupt)
-            if self._collector and self._config.save_trace_path:
+            if self._collector and self._collector_output_dir:
                 try:
                     from heimdall.collector import Exporter
 
-                    exporter = Exporter(Path(self._config.save_trace_path).parent)
+                    exporter = Exporter(self._collector_output_dir)
+                    collected = self._collector.export()["steps"]
                     await asyncio.to_thread(
-                        exporter.export_steps,
-                        self._collector.export()["steps"],
-                        "collector_steps.json",
+                        exporter.export_steps, collected, "collector_steps.json"
                     )
-                    logger.info("Collector steps exported")
+                    await asyncio.to_thread(exporter.export_selectors, collected, "selectors.json")
+                    logger.info(
+                        f"Collector exported to {self._collector_output_dir}: "
+                        "collector_steps.json, selectors.json"
+                    )
                 except Exception as e:
                     logger.error(f"Failed to export collector data: {e}")
 
@@ -630,18 +642,16 @@ class Agent:
                 self._state.total_failures += 1
                 logger.warning(f"Action failed: {exec_result.error}")
 
-        if self._collector and self._config.save_trace_path:
+        if self._collector and self._collector_output_dir:
             await self._collector.end_step()
             try:
                 from heimdall.collector import Exporter
 
-                exporter = Exporter(Path(self._config.save_trace_path).parent)
-                await asyncio.to_thread(
-                    exporter.export_steps,
-                    self._collector.export()["steps"],
-                    "collector_steps.json",
-                )
-                logger.debug("Collector steps exported (incremental)")
+                exporter = Exporter(self._collector_output_dir)
+                collected = self._collector.export()["steps"]
+                await asyncio.to_thread(exporter.export_steps, collected, "collector_steps.json")
+                await asyncio.to_thread(exporter.export_selectors, collected, "selectors.json")
+                logger.debug("Collector export updated (steps + selectors)")
             except Exception as e:
                 logger.warning(f"Failed to export collector data: {e}")
 
