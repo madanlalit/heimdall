@@ -387,11 +387,19 @@ class SelectorGenerator:
         if node.attributes.get("name"):
             selectors["name"] = f'[name="{node.attributes["name"]}"]'
 
+        # href for anchor tags — most stable selector for links (contains path/ASIN/slug)
+        # Strip query params so the selector stays reusable across sessions
+        if node.node_name.upper() == "A" and node.attributes.get("href"):
+            href = node.attributes["href"].split("?")[0].rstrip("/")
+            if href:
+                selectors["href"] = f'a[href*="{href}"]'
+                selectors["href_xpath"] = f"//a[contains(@href, '{href}')]"
+
         # Text content (for buttons/links)
         if node.ax_name:
             selectors["text"] = node.ax_name
 
-        # XPath by attributes
+        # XPath by attributes (id / name / data-testid)
         attrs = []
         for key in ["id", "name", "data-testid"]:
             if node.attributes.get(key):
