@@ -360,6 +360,46 @@ class DOMNode(BaseModel):
         return int(hashlib.sha256(str(hash_components).encode("utf-8")).hexdigest(), 16)
 
 
+def _escape_css_attr_value(value: str) -> str:
+    """Escape a string for safe embedding inside a CSS attribute selector.
+
+    CSS attribute selectors use double-quoted strings. Backslashes and
+    double-quotes must be escaped so the selector remains valid.
+
+    Example:  test"path  →  test\\"path
+    """
+    # Escape backslash first (must be first to avoid double-escaping)
+    value = value.replace("\\", "\\\\")
+    # Escape double-quote
+    value = value.replace('"', '\\"')
+    return value
+
+
+def _xpath_string_literal(value: str) -> str:
+    """Return a safe XPath 1.0 string literal for the given value.
+
+    XPath 1.0 has no escape sequences inside string literals, so:
+    - No single quotes  → wrap in single quotes:  'value'
+    - No double quotes  → wrap in double quotes:  "value"
+    - Both present      → use concat() splitting on single-quotes:
+                          concat('it', "'", 's "fine"')
+    """
+    if "'" not in value:
+        return f"'{value}'"
+    if '"' not in value:
+        return f'"{value}"'
+    # Both quote types present: split on ' and interleave with the "'" literal
+    parts = value.split("'")
+    # Between every adjacent pair of parts we insert the single-quote literal
+    segments = []
+    for i, part in enumerate(parts):
+        if part:
+            segments.append(f"'{part}'")
+        if i < len(parts) - 1:
+            segments.append('"' + "'" + '"')
+    return f"concat({', '.join(segments)})"
+
+
 class SelectorGenerator:
     """Generates multiple selector strategies for elements."""
 
@@ -388,12 +428,15 @@ class SelectorGenerator:
             selectors["name"] = f'[name="{node.attributes["name"]}"]'
 
         # href for anchor tags — most stable selector for links (contains path/ASIN/slug)
-        # Strip query params so the selector stays reusable across sessions
+        # Strip query params so the selector stays reusable across sessions.
+        # Escape special characters so the generated selectors are always valid.
         if node.node_name.upper() == "A" and node.attributes.get("href"):
             href = node.attributes["href"].split("?")[0].rstrip("/")
             if href:
-                selectors["href"] = f'a[href*="{href}"]'
-                selectors["href_xpath"] = f"//a[contains(@href, '{href}')]"
+                css_val = _escape_css_attr_value(href)
+                xpath_val = _xpath_string_literal(href)
+                selectors["href"] = f'a[href*="{css_val}"]'
+                selectors["href_xpath"] = f"//a[contains(@href, {xpath_val})]"
 
         # Text content (for buttons/links)
         if node.ax_name:

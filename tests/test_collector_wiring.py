@@ -166,3 +166,65 @@ def test_selector_generator_href_strips_query_params():
     assert "href" in selectors
     assert "?" not in selectors["href"]
     assert "/Logitech/dp/B0B39FDRKV" in selectors["href"]
+
+
+# ── Escaping / injection tests ────────────────────────────────────────────────
+
+
+def test_href_with_double_quote_produces_valid_css_selector():
+    """href containing a double-quote must not break the CSS attribute selector."""
+    from heimdall.dom.service import DOMNode, SelectorGenerator
+
+    gen = SelectorGenerator()
+    node = DOMNode(
+        backend_node_id=200,
+        node_name="A",
+        attributes={"href": '/path/with"quote'},
+        ax_name="",
+    )
+    selectors = gen.generate(node)
+
+    css = selectors["href"]
+    # The double-quote must be backslash-escaped inside the CSS string
+    assert '\\"' in css, f"Double-quote not escaped in CSS selector: {css}"
+    # The selector must open and close properly
+    assert css.startswith('a[href*="')
+    assert css.endswith('"]')
+
+
+def test_href_with_single_quote_produces_valid_xpath():
+    """href containing a single-quote must not break the XPath contains() call."""
+    from heimdall.dom.service import DOMNode, SelectorGenerator
+
+    gen = SelectorGenerator()
+    node = DOMNode(
+        backend_node_id=201,
+        node_name="A",
+        attributes={"href": "/path/it's-here"},
+        ax_name="",
+    )
+    selectors = gen.generate(node)
+
+    xpath = selectors["href_xpath"]
+    # XPath fallback: should wrap in double-quotes when single-quote is present
+    assert '"' in xpath, f"XPath not using double-quote delimiter: {xpath}"
+    # Must not have an unescaped single-quote inside the literal
+    assert xpath.startswith("//a[contains(@href,")
+
+
+def test_href_with_both_quotes_uses_xpath_concat():
+    """href containing both quote types must use XPath concat() strategy."""
+    from heimdall.dom.service import DOMNode, SelectorGenerator
+
+    gen = SelectorGenerator()
+    node = DOMNode(
+        backend_node_id=202,
+        node_name="A",
+        attributes={"href": '/path/it\'s-a-"test"'},
+        ax_name="",
+    )
+    selectors = gen.generate(node)
+
+    xpath = selectors["href_xpath"]
+    assert "concat(" in xpath, f"XPath should use concat() for mixed quotes: {xpath}"
+    assert xpath.startswith("//a[contains(@href,")
