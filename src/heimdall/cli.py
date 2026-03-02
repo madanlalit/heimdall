@@ -10,9 +10,13 @@ import asyncio
 from pathlib import Path
 from typing import Annotated
 
-import typer
-from dotenv import load_dotenv
-from rich.console import Console
+try:
+    import typer  # type: ignore
+    from dotenv import load_dotenv  # type: ignore
+except ImportError as _e:
+    raise ImportError(
+        "Heimdall CLI requires extra dependencies. Install them with: pip install 'heimdall[cli]'"
+    ) from _e
 
 from heimdall.config import LLMProvider
 
@@ -24,8 +28,6 @@ app = typer.Typer(
     help="LLM-powered browser automation agent",
     add_completion=False,
 )
-
-console = Console()
 
 
 @app.command()
@@ -113,16 +115,16 @@ def run(
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG" if verbose else "INFO"
     setup_logging(level=level)
 
-    console.print("[bold]Heimdall[/bold] - Browser Automation Agent")
-    console.print(f"Task: {task[:80]}{'...' if len(task) > 80 else ''}")
+    print("Heimdall - Browser Automation Agent")
+    print(f"Task: {task[:80]}{'...' if len(task) > 80 else ''}")
 
     if url:
-        console.print(f"URL: {url}")
+        print(f"URL: {url}")
 
     task_path = Path(task)
     if task_path.exists() and task_path.suffix in [".yaml", ".yml", ".json"]:
         task_content = _load_task_file(task_path)
-        console.print(f"Loaded task from: {task_path}")
+        print(f"Loaded task from: {task_path}")
     else:
         task_content = task
 
@@ -131,9 +133,9 @@ def run(
         instructions_path = Path(instructions)
         if instructions_path.exists():
             extend_system_prompt = instructions_path.read_text()
-            console.print(f"Loaded instructions from: {instructions_path}")
+            print(f"Loaded instructions from: {instructions_path}")
         else:
-            console.print(f"[yellow]Warning: Instructions file not found: {instructions}[/yellow]")
+            print(f"Warning: Instructions file not found: {instructions}")
 
     try:
         result = asyncio.run(
@@ -157,22 +159,22 @@ def run(
         )
 
         if result.is_successful():
-            console.print("[green]✓ Task completed successfully[/green]")
-            console.print(f"Steps: {len(result)}")
-            console.print(f"Duration: {result.total_duration_seconds():.2f}s")
+            print("✓ Task completed successfully")
+            print(f"Steps: {len(result)}")
+            print(f"Duration: {result.total_duration_seconds():.2f}s")
         else:
-            console.print("[red]✗ Task failed[/red]")
+            print("✗ Task failed")
             if result.history and result.history[-1].results:
                 error = result.history[-1].results[-1].error
                 if error:
-                    console.print(f"Error: {error}")
+                    print(f"Error: {error}")
             raise typer.Exit(1)
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Execution interrupted by user[/yellow]")
+        print("\nExecution interrupted by user")
 
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        print(f"Error: {e}")
         raise typer.Exit(1) from None
 
 
@@ -279,14 +281,16 @@ async def _run_agent(
 
 
 def _load_task_file(path: Path) -> str:
-    """Load task from YAML or JSON file."""
+    """Load task from JSON file."""
     import json
-
-    import yaml
 
     content = path.read_text()
 
-    data = yaml.safe_load(content) if path.suffix in [".yaml", ".yml"] else json.loads(content)
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        # Fallback to plain text if not valid JSON
+        return content
 
     if isinstance(data, dict):
         task_val = data.get("task") or data.get("description")
@@ -300,7 +304,7 @@ def _load_task_file(path: Path) -> str:
 @app.command()
 def version() -> None:
     """Show version information."""
-    console.print("Heimdall v0.1.0")
+    print("Heimdall v0.1.0")
 
 
 @app.command()
@@ -329,9 +333,9 @@ output:
   screenshots: true
   network: true
 """)
-        console.print(f"Created: {config_path}")
+        print(f"Created: {config_path}")
 
-        console.print(f"Created: {config_path}")
+        print(f"Created: {config_path}")
 
     task_path = workspace / "task.yaml"
     if not task_path.exists():
@@ -345,9 +349,9 @@ steps:
   - Click the login button
   - Verify dashboard is displayed
 """)
-        console.print(f"Created: {task_path}")
+        print(f"Created: {task_path}")
 
-    console.print("[green]✓ Workspace initialized[/green]")
+    print("✓ Workspace initialized")
 
 
 def main() -> None:

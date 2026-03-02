@@ -374,26 +374,17 @@ class Agent:
 
     async def _handle_pause(self) -> None:
         """Handle pause request - save state and wait for resume."""
-        from rich.console import Console
-
-        console = Console()
-
         self._paused = True
         await self._save_state(paused=True)
 
-        console.print("\n[bold yellow]⏸️  Execution paused[/bold yellow]")
-        console.print(f"   Step: {self._state.step_count}/{self._config.max_steps}")
-        console.print(f"   Session: {self._session_id}")
+        print("\n⏸️  Execution paused")
+        print(f"   Step: {self._state.step_count}/{self._config.max_steps}")
+        print(f"   Session: {self._session_id}")
 
         if self._state_manager:
-            console.print(
-                f"   State saved to: {self._state_manager.workspace}/.heimdall_state.json"
-            )
+            print(f"   State saved to: {self._state_manager.workspace}/.heimdall_state.json")
 
-        console.print(
-            "\n   Press [bold green]Enter[/bold green] to resume, "
-            "or [bold red]Ctrl+C[/bold red] to exit...\n"
-        )
+        print("\n   Press Enter to resume, or Ctrl+C to exit...\n")
 
         # Clear event from previous runs
         self._resume_event.clear()
@@ -419,7 +410,7 @@ class Agent:
             # Loop in run() will handle the break
             pass
         else:
-            console.print("[bold green]▶️  Resuming execution...[/bold green]\n")
+            print("▶️  Resuming execution...\n")
             self._paused = False
 
     async def _save_state(self, paused: bool = False) -> None:
