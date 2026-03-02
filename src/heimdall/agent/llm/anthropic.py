@@ -22,7 +22,13 @@ class AnthropicLLM(BaseLLM):
     ):
         import os
 
-        from anthropic import AsyncAnthropic
+        try:
+            from anthropic import AsyncAnthropic
+        except ImportError as err:
+            raise ImportError(
+                "anthropic is required for the Anthropic provider. "
+                'Install with: pip install "heimdall[anthropic]"'
+            ) from err
 
         self._client = AsyncAnthropic(
             api_key=api_key or os.getenv("ANTHROPIC_API_KEY"),

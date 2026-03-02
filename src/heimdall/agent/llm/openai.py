@@ -22,7 +22,13 @@ class OpenAILLM(BaseLLM):
     ):
         import os
 
-        from openai import AsyncOpenAI
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as err:
+            raise ImportError(
+                "openai is required for the OpenAI provider. "
+                'Install with: pip install "heimdall[openai]"'
+            ) from err
 
         self._client = AsyncOpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY"),
