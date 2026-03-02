@@ -1,31 +1,12 @@
 """
-Logging Configuration - Structured logging with Rich console.
+Logging Configuration - Structured logging setup.
 
-Provides pretty, structured logging for debugging Heimdall agent runs.
+Provides logging for debugging Heimdall agent runs.
+Uses stdlib logging.
 """
 
 import logging
 from typing import Literal
-
-from rich.console import Console
-from rich.logging import RichHandler
-from rich.theme import Theme
-
-# Custom theme for Heimdall logs
-HEIMDALL_THEME = Theme(
-    {
-        "info": "cyan",
-        "warning": "yellow",
-        "error": "bold red",
-        "debug": "dim",
-        "step": "bold green",
-        "action": "bold magenta",
-        "cdp": "dim cyan",
-    }
-)
-
-# Shared console instance
-console = Console(theme=HEIMDALL_THEME)
 
 
 def setup_logging(
@@ -33,31 +14,20 @@ def setup_logging(
     show_path: bool = False,
 ) -> None:
     """
-    Configure logging with Rich console handler.
+    Configure logging.
 
     Args:
         level: Logging level
-        show_path: Show file path in log messages
+        show_path: Ignored, kept for compatibility
     """
-    # Configure Rich handler
-    handler = RichHandler(
-        console=console,
-        show_time=True,
-        show_level=True,
-        show_path=show_path,
-        rich_tracebacks=True,
-        tracebacks_show_locals=True,
-        markup=True,
-    )
-    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
 
-    # Configure root heimdall logger
     heimdall_logger = logging.getLogger("heimdall")
     heimdall_logger.setLevel(level)
     heimdall_logger.handlers = [handler]
     heimdall_logger.propagate = False
 
-    # Also set level for submodules
     for name in ["heimdall.browser", "heimdall.agent", "heimdall.dom", "heimdall.watchdogs"]:
         logging.getLogger(name).setLevel(level)
 
@@ -80,8 +50,6 @@ def get_logger(name: str) -> logging.Logger:
 class HeimdallLogger:
     """
     Structured logger for Heimdall operations.
-
-    Provides semantic logging methods for different operation types.
     """
 
     def __init__(self, name: str = "heimdall"):
@@ -90,11 +58,11 @@ class HeimdallLogger:
     def step(self, step_num: int, instruction: str) -> None:
         """Log step start."""
         truncated = instruction[:80] + ("..." if len(instruction) > 80 else "")
-        self._logger.info(f"[step]Step {step_num}[/step]: {truncated}")
+        self._logger.info(f"Step {step_num}: {truncated}")
 
     def action(self, name: str, target: str = "", result: str = "") -> None:
         """Log action execution."""
-        msg = f"[action]{name}[/action]"
+        msg = f"Action: {name}"
         if target:
             msg += f" → {target}"
         if result:
@@ -104,7 +72,7 @@ class HeimdallLogger:
     def cdp(self, domain: str, command: str, params: dict | None = None) -> None:
         """Log CDP command (debug level)."""
         param_str = str(params)[:50] if params else ""
-        self._logger.debug(f"[cdp]CDP[/cdp]: {domain}.{command}({param_str})")
+        self._logger.debug(f"CDP: {domain}.{command}({param_str})")
 
     def element(self, action: str, backend_node_id: int, details: str = "") -> None:
         """Log element interaction."""
@@ -126,15 +94,15 @@ class HeimdallLogger:
 
     def error(self, message: str, exc: Exception | None = None) -> None:
         """Log error."""
-        self._logger.error(f"[error]{message}[/error]", exc_info=exc)
+        self._logger.error(message, exc_info=exc)
 
     def warning(self, message: str) -> None:
         """Log warning."""
-        self._logger.warning(f"[warning]{message}[/warning]")
+        self._logger.warning(message)
 
     def success(self, message: str) -> None:
         """Log success message."""
-        self._logger.info(f"[green]✓[/green] {message}")
+        self._logger.info(f"✓ {message}")
 
     def debug(self, message: str) -> None:
         """Log debug message."""
