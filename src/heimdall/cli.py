@@ -39,9 +39,9 @@ def run(
         typer.Option(
             "--llm",
             "-l",
-            help="LLM provider (openrouter/openai/anthropic/groq)",
+            help="LLM provider (auto/openrouter/openai/anthropic/groq/bedrock)",
         ),
-    ] = "openrouter",
+    ] = "auto",
     model: Annotated[str | None, typer.Option("--model", "-m", help="LLM model name")] = None,
     demo: Annotated[
         bool, typer.Option("--demo", help="Enable demo mode with visual feedback")
@@ -322,7 +322,7 @@ browser:
   timeout: 30
 
 llm:
-  provider: openai
+  provider: auto
   model: gpt-4
 
 output:
