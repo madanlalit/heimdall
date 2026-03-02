@@ -43,14 +43,11 @@ def _resolve_auto_provider() -> LLMProvider:
         return "anthropic"
     if os.getenv("GROQ_API_KEY") and _module_available("groq"):
         return "groq"
-    if (
-        _module_available("boto3")
-        and (
-            os.getenv("AWS_ACCESS_KEY_ID")
-            or os.getenv("AWS_PROFILE")
-            or os.getenv("AWS_REGION")
-            or os.getenv("AWS_DEFAULT_REGION")
-        )
+    if _module_available("boto3") and (
+        os.getenv("AWS_ACCESS_KEY_ID")
+        or os.getenv("AWS_PROFILE")
+        or os.getenv("AWS_REGION")
+        or os.getenv("AWS_DEFAULT_REGION")
     ):
         return "bedrock"
 

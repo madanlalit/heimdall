@@ -62,8 +62,10 @@ class BedrockLLM(BaseLLM):
             temperature: Sampling temperature (0.0 = deterministic).
             max_tokens: Maximum tokens to generate.
         """
+        import importlib
+
         try:
-            import boto3
+            boto3_module = importlib.import_module("boto3")
         except ImportError as err:
             raise ImportError(
                 "boto3 is required for the Bedrock provider. "
@@ -71,10 +73,7 @@ class BedrockLLM(BaseLLM):
             ) from err
 
         resolved_region = (
-            region_name
-            or os.getenv("AWS_DEFAULT_REGION")
-            or os.getenv("AWS_REGION")
-            or "us-east-1"
+            region_name or os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION") or "us-east-1"
         )
 
         session_kwargs: dict[str, str] = {}
@@ -91,7 +90,7 @@ class BedrockLLM(BaseLLM):
                 "AWS_SESSION_TOKEN", ""
             )
 
-        session = boto3.Session(**session_kwargs)
+        session = boto3_module.Session(**session_kwargs)
         self._client = session.client("bedrock-runtime", region_name=resolved_region)
         self._model = model
         self._temperature = temperature
@@ -362,6 +361,7 @@ class BedrockLLM(BaseLLM):
             len(tool_calls),
         )
         return result
+
     _SUPPORTED_CONVERSE_KWARGS = {
         "additionalModelRequestFields",
         "additionalModelResponseFieldPaths",

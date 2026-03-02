@@ -51,14 +51,17 @@ class OpenRouterLLM(BaseLLM):
             site_url: Optional URL for rankings on openrouter.ai
             site_name: App name shown in OpenRouter dashboard
         """
+        import importlib
+
         try:
-            from openai import AsyncOpenAI
+            openai_module = importlib.import_module("openai")
         except ImportError as err:
             raise ImportError(
                 "openai is required for the OpenRouter provider. "
                 'Install with: pip install "heimdall[openrouter]"'
             ) from err
 
+        AsyncOpenAI = openai_module.AsyncOpenAI
         self._client = AsyncOpenAI(
             api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
             base_url=self.OPENROUTER_BASE_URL,

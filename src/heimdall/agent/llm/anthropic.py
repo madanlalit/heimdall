@@ -20,16 +20,18 @@ class AnthropicLLM(BaseLLM):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ):
+        import importlib
         import os
 
         try:
-            from anthropic import AsyncAnthropic
+            anthropic_module = importlib.import_module("anthropic")
         except ImportError as err:
             raise ImportError(
                 "anthropic is required for the Anthropic provider. "
                 'Install with: pip install "heimdall[anthropic]"'
             ) from err
 
+        AsyncAnthropic = anthropic_module.AsyncAnthropic
         self._client = AsyncAnthropic(
             api_key=api_key or os.getenv("ANTHROPIC_API_KEY"),
         )

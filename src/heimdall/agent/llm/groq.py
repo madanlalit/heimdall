@@ -23,16 +23,17 @@ class GroqLLM(BaseLLM):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ):
+        import importlib
         import os
 
         try:
-            from groq import AsyncGroq
+            groq_module = importlib.import_module("groq")
         except ImportError as err:
             raise ImportError(
-                "groq is required for the Groq provider. "
-                'Install with: pip install "heimdall[groq]"'
+                'groq is required for the Groq provider. Install with: pip install "heimdall[groq]"'
             ) from err
 
+        AsyncGroq = groq_module.AsyncGroq
         self._client = AsyncGroq(
             api_key=api_key or os.getenv("GROQ_API_KEY"),
         )
