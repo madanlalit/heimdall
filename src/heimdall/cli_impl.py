@@ -316,9 +316,6 @@ def init(
     workspace = Path(directory)
     workspace.mkdir(parents=True, exist_ok=True)
 
-    workspace = Path(directory)
-    workspace.mkdir(parents=True, exist_ok=True)
-
     config_path = workspace / "heimdall.json"
     if not config_path.exists():
         config_path.write_text("""{

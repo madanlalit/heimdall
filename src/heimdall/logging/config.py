@@ -94,11 +94,11 @@ class HeimdallLogger:
 
     def error(self, message: str, exc: Exception | None = None) -> None:
         """Log error."""
-        self._logger.error(f"Error: {message}", exc_info=exc)
+        self._logger.error(message, exc_info=exc)
 
     def warning(self, message: str) -> None:
         """Log warning."""
-        self._logger.warning(f"Warning: {message}")
+        self._logger.warning(message)
 
     def success(self, message: str) -> None:
         """Log success message."""
