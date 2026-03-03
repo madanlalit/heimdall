@@ -7,16 +7,26 @@ Usage:
 """
 
 import asyncio
+import importlib
 from pathlib import Path
 from typing import Annotated
 
-import typer  # type: ignore
-from dotenv import load_dotenv  # type: ignore
-
 from heimdall.config import LLMProvider
 
+
+def _require_module(module_name: str):
+    """Import an optional CLI dependency or raise a clean ImportError."""
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as err:
+        raise ImportError(module_name) from err
+
+
+typer = _require_module("typer")
+dotenv = _require_module("dotenv")
+
 # Load .env file if present
-load_dotenv()
+dotenv.load_dotenv()
 
 app = typer.Typer(
     name="heimdall",

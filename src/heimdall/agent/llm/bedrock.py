@@ -77,18 +77,17 @@ class BedrockLLM(BaseLLM):
         )
 
         session_kwargs: dict[str, str] = {}
-        if aws_access_key_id or os.getenv("AWS_ACCESS_KEY_ID"):
-            session_kwargs["aws_access_key_id"] = aws_access_key_id or os.getenv(
-                "AWS_ACCESS_KEY_ID", ""
-            )
-        if aws_secret_access_key or os.getenv("AWS_SECRET_ACCESS_KEY"):
-            session_kwargs["aws_secret_access_key"] = aws_secret_access_key or os.getenv(
-                "AWS_SECRET_ACCESS_KEY", ""
-            )
-        if aws_session_token or os.getenv("AWS_SESSION_TOKEN"):
-            session_kwargs["aws_session_token"] = aws_session_token or os.getenv(
-                "AWS_SESSION_TOKEN", ""
-            )
+        resolved_access_key = aws_access_key_id or os.getenv("AWS_ACCESS_KEY_ID")
+        if resolved_access_key:
+            session_kwargs["aws_access_key_id"] = resolved_access_key
+
+        resolved_secret_key = aws_secret_access_key or os.getenv("AWS_SECRET_ACCESS_KEY")
+        if resolved_secret_key:
+            session_kwargs["aws_secret_access_key"] = resolved_secret_key
+
+        resolved_session_token = aws_session_token or os.getenv("AWS_SESSION_TOKEN")
+        if resolved_session_token:
+            session_kwargs["aws_session_token"] = resolved_session_token
 
         session = boto3_module.Session(**session_kwargs)
         self._client = session.client("bedrock-runtime", region_name=resolved_region)

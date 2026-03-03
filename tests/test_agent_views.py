@@ -12,10 +12,8 @@ from heimdall.agent.views import (
     AgentHistory,
     AgentHistoryList,
     AgentOutput,
-    BrowserStateSnapshot,
     StepMetadata,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
