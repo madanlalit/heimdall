@@ -63,7 +63,87 @@ class DomService:
                 "height": viewport.get("clientHeight", 0),
             }
 
+        # Add pagination detection
+        serialized.pagination_info = self.detect_pagination_buttons(tree)
+
         return serialized
+
+    def detect_pagination_buttons(self, nodes: list["DOMNode"]) -> dict:
+        """
+        Detect pagination elements for multi-page data extraction.
+
+        Returns:
+            Structured pagination info with next, prev, and page buttons.
+        """
+        pagination: dict[str, dict | list[dict] | None] = {
+            "next_button": None,
+            "prev_button": None,
+            "page_buttons": [],
+        }
+        for node in nodes:
+            if not node.is_visible or not node.is_interactive:
+                continue
+
+            text = (
+                (
+                    node.ax_name
+                    or node.attributes.get("aria-label", "")
+                    or node.attributes.get("title", "")
+                )
+                .lower()
+                .strip()
+            )
+
+            rel = node.attributes.get("rel", "").lower()
+            class_name = node.attributes.get("class", "").lower()
+            text_content = text or node.node_name.lower()
+
+            # Simple heuristics for Next
+            is_next = (
+                rel == "next"
+                or "next" in text_content
+                or "»" in text_content
+                or "›" in text_content
+                or ("next" in class_name and ("page" in class_name or "pagination" in class_name))
+            )
+
+            # Simple heuristics for Previous
+            is_prev = (
+                rel == "prev"
+                or "prev" in text_content
+                or "«" in text_content
+                or "‹" in text_content
+                or ("prev" in class_name and ("page" in class_name or "pagination" in class_name))
+            )
+
+            # Detect numeric page buttons or standard texts like "Page 2"
+            is_page_number = False
+            if text_content.isdigit() or (
+                ("page" in text_content or "página" in text_content)
+                and any(c.isdigit() for c in text_content)
+            ):
+                is_page_number = True
+
+            node_info = {
+                "backend_node_id": node.backend_node_id,
+                "text": node.ax_name or text,
+                "node_name": node.node_name,
+                "attributes": node.attributes,
+            }
+
+            if is_next and not pagination["next_button"]:
+                pagination["next_button"] = node_info
+            elif is_prev and not pagination["prev_button"]:
+                pagination["prev_button"] = node_info
+            elif (
+                is_page_number
+                and not is_next
+                and not is_prev
+                and isinstance(pagination["page_buttons"], list)
+            ):
+                pagination["page_buttons"].append(node_info)
+
+        return pagination
 
     async def _get_snapshot(self) -> dict:
         """Capture DOM snapshot with styles."""
@@ -579,3 +659,4 @@ class SerializedDOM(BaseModel):
     selector_map: dict[int, dict] = Field(default_factory=dict)
     element_count: int = 0
     scroll_info: dict[str, float] = Field(default_factory=dict)
+    pagination_info: dict = Field(default_factory=dict)
