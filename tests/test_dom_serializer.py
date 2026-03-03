@@ -2,7 +2,6 @@
 
 from heimdall.dom.service import DOMNode, DOMSerializer, SelectorGenerator
 
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 

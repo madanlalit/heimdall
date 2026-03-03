@@ -98,6 +98,13 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.mypy]
+python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = ["cdp_use", "cdp_use.*"]
+ignore_missing_imports = true
+
 [tool.ty.environment]
 python-version = "3.11"
 root = ["./src"]

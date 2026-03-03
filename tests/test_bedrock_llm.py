@@ -7,10 +7,13 @@ We mock boto3 so these tests run without real AWS credentials.
 import json
 import sys
 import types
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+if TYPE_CHECKING:
+    from heimdall.agent.llm.bedrock import BedrockLLM
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -5,7 +5,6 @@ import pytest
 from heimdall.exceptions import ActionError
 from heimdall.tools.registry import ActionResult, ToolRegistry
 
-
 # ── ActionResult ──────────────────────────────────────────────────────────────
 
 
@@ -72,12 +71,12 @@ class TestActionDecorator:
 
     def test_multiple_actions_registered_independently(self):
         @self.reg.action("First")
-        def first_action() -> ActionResult:  # type: ignore[return]
-            pass
+        def first_action() -> ActionResult:
+            return ActionResult.ok()
 
         @self.reg.action("Second")
-        def second_action() -> ActionResult:  # type: ignore[return]
-            pass
+        def second_action() -> ActionResult:
+            return ActionResult.ok()
 
         assert "first_action" in self.reg.actions
         assert "second_action" in self.reg.actions
@@ -124,6 +123,9 @@ class TestExecute:
 
         result = await self.reg.execute("requires_int", {"x": "not-an-int"})
         # Pydantic coerces strings to int when possible; test with truly invalid type
+        assert result.success is False
+        assert "Invalid parameters" in result.error
+
         # Use a dict as the value to ensure a validation error
         result2 = await self.reg.execute("requires_int", {"x": {"nested": True}})
         assert result2.success is False
@@ -210,12 +212,12 @@ class TestSchema:
 
     def test_schema_has_one_entry_per_action(self):
         @self.reg.action("First")
-        def act_a() -> ActionResult:  # type: ignore[return]
-            pass
+        def act_a() -> ActionResult:
+            return ActionResult.ok()
 
         @self.reg.action("Second")
-        def act_b() -> ActionResult:  # type: ignore[return]
-            pass
+        def act_b() -> ActionResult:
+            return ActionResult.ok()
 
         assert len(self.reg.schema()) == 2
 
