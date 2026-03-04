@@ -30,17 +30,40 @@ classifiers = [
 ]
 dependencies = [
     "cdp-use>=0.1.0",
-    "openai>=1.0.0",
-    "anthropic>=0.18.0",
-    "google-genai>=1.0.0",
     "pydantic>=2.0.0",
-    "typer>=0.9.0",
-    "pyyaml>=6.0",
-    "rich>=13.0.0",
-    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
+cli = [
+    "typer>=0.9.0",
+    "python-dotenv>=1.0.0",
+]
+openai = [
+    "openai>=1.0.0",
+]
+openrouter = [
+    "openai>=1.0.0",
+]
+anthropic = [
+    "anthropic>=0.18.0",
+]
+google = [
+    "google-genai>=1.0.0",
+]
+groq = [
+    "groq>=0.4.0",
+]
+bedrock = [
+    "boto3>=1.34.0",
+]
+all = [
+    "heimdall[cli]",
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+    "google-genai>=1.0.0",
+    "groq>=0.4.0",
+    "boto3>=1.34.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -53,10 +76,10 @@ dev = [
 heimdall = "heimdall.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/heimdall-automation/heimdall"
-Documentation = "https://github.com/heimdall-automation/heimdall#readme"
-Repository = "https://github.com/heimdall-automation/heimdall"
-Issues = "https://github.com/heimdall-automation/heimdall/issues"
+Homepage = "https://github.com/madanlalit/heimdall"
+Documentation = "https://github.com/madanlalit/heimdall#readme"
+Repository = "https://github.com/madanlalit/heimdall"
+Issues = "https://github.com/madanlalit/heimdall/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -78,6 +101,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = ["cdp_use", "cdp_use.*"]
+ignore_missing_imports = true
 
 [tool.ty.environment]
 python-version = "3.11"
@@ -104,5 +134,7 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
     "types-pyyaml>=6.0.12.20250915",
 ]

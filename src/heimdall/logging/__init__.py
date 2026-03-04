@@ -6,7 +6,6 @@ Provides structured logging with Rich console output.
 
 from heimdall.logging.config import (
     HeimdallLogger,
-    console,
     get_logger,
     logger,
     setup_logging,
@@ -22,7 +21,6 @@ __all__ = [
     "get_logger",
     "HeimdallLogger",
     "logger",
-    "console",
     "JSONFormatter",
     "CompactFormatter",
     "StepFormatter",

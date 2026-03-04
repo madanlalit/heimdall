@@ -7,7 +7,8 @@ and layout information, then serializes for LLM consumption.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+import re
+from typing import TYPE_CHECKING, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,39 @@ if TYPE_CHECKING:
     from heimdall.browser.session import BrowserSession
 
 logger = logging.getLogger(__name__)
+
+_NEXT_LABEL_PATTERN = re.compile(r"^(next|next page|go to next page|older|older posts)$")
+_PREV_LABEL_PATTERN = re.compile(
+    r"^(prev|previous|previous page|go to previous page|newer|newer posts)$",
+)
+_PAGINATION_CONTEXT_PATTERN = re.compile(r"\b(page|pagination|pager|paginator)\b")
+_PAGE_PARAM_PATTERN = re.compile(r"([?&](page|p)=\d+|/page/\d+)")
+_PAGE_LABEL_PATTERN = re.compile(r"^(page|página)\s*#?\s*(\d{1,3})$")
+
+
+def _contains_word(word: str, text: str) -> bool:
+    return bool(re.search(rf"\b{re.escape(word)}\b", text))
+
+
+class PaginationNodeInfo(TypedDict):
+    backend_node_id: int
+    text: str
+    node_name: str
+    attributes: dict[str, str]
+
+
+class PaginationInfo(TypedDict):
+    next_button: PaginationNodeInfo | None
+    prev_button: PaginationNodeInfo | None
+    page_buttons: list[PaginationNodeInfo]
+
+
+def _empty_pagination_info() -> PaginationInfo:
+    return {
+        "next_button": None,
+        "prev_button": None,
+        "page_buttons": [],
+    }
 
 
 class DomService:
@@ -63,7 +97,93 @@ class DomService:
                 "height": viewport.get("clientHeight", 0),
             }
 
+        # Add pagination detection
+        serialized.pagination_info = self.detect_pagination_buttons(tree)
+
         return serialized
+
+    def detect_pagination_buttons(self, nodes: list["DOMNode"]) -> PaginationInfo:
+        """
+        Detect pagination elements for multi-page data extraction.
+
+        Returns:
+            Structured pagination info with next, prev, and page buttons.
+        """
+        pagination: PaginationInfo = _empty_pagination_info()
+        for node in nodes:
+            if not node.is_visible or not node.is_interactive:
+                continue
+
+            raw_text = (
+                node.ax_name
+                or node.attributes.get("aria-label", "")
+                or node.attributes.get("title", "")
+            ).strip()
+            text_content = raw_text.lower()
+
+            rel = node.attributes.get("rel", "").lower()
+            class_name = node.attributes.get("class", "").lower()
+            node_id = node.attributes.get("id", "").lower()
+            href = node.attributes.get("href", "").lower()
+            context = f"{class_name} {node_id} {href}".strip()
+            has_pagination_context = bool(
+                _PAGINATION_CONTEXT_PATTERN.search(context) or _PAGE_PARAM_PATTERN.search(href),
+            )
+
+            is_next_class = (
+                _contains_word("next", f"{class_name} {node_id}") and has_pagination_context
+            )
+            is_prev_class = (
+                _contains_word("prev", f"{class_name} {node_id}")
+                or _contains_word("previous", f"{class_name} {node_id}")
+            ) and has_pagination_context
+            has_next_arrow = any(symbol in text_content for symbol in ("»", "›")) and (
+                has_pagination_context or rel == "next"
+            )
+            has_prev_arrow = any(symbol in text_content for symbol in ("«", "‹")) and (
+                has_pagination_context or rel == "prev"
+            )
+
+            is_next = (
+                rel == "next"
+                or bool(_NEXT_LABEL_PATTERN.fullmatch(text_content))
+                or text_content == "next"
+                or is_next_class
+                or has_next_arrow
+            )
+            is_prev = (
+                rel == "prev"
+                or bool(_PREV_LABEL_PATTERN.fullmatch(text_content))
+                or text_content == "prev"
+                or is_prev_class
+                or has_prev_arrow
+            )
+
+            is_page_number = False
+            if text_content.isdigit():
+                page_number = int(text_content)
+                is_page_number = 1 <= page_number <= 999 and has_pagination_context
+            else:
+                page_label_match = _PAGE_LABEL_PATTERN.fullmatch(text_content)
+                if page_label_match:
+                    page_number = int(page_label_match.group(2))
+                    is_page_number = 1 <= page_number <= 999
+
+            node_info: PaginationNodeInfo = {
+                "backend_node_id": node.backend_node_id,
+                "text": raw_text,
+                "node_name": node.node_name,
+                "attributes": node.attributes,
+            }
+
+            if is_next and not pagination["next_button"]:
+                pagination["next_button"] = node_info
+            elif is_prev and not pagination["prev_button"]:
+                pagination["prev_button"] = node_info
+            elif is_page_number and not is_next and not is_prev:
+                pagination["page_buttons"].append(node_info)
+
+        return pagination
 
     async def _get_snapshot(self) -> dict:
         """Capture DOM snapshot with styles."""
@@ -360,6 +480,46 @@ class DOMNode(BaseModel):
         return int(hashlib.sha256(str(hash_components).encode("utf-8")).hexdigest(), 16)
 
 
+def _escape_css_attr_value(value: str) -> str:
+    """Escape a string for safe embedding inside a CSS attribute selector.
+
+    CSS attribute selectors use double-quoted strings. Backslashes and
+    double-quotes must be escaped so the selector remains valid.
+
+    Example:  test"path  →  test\\"path
+    """
+    # Escape backslash first (must be first to avoid double-escaping)
+    value = value.replace("\\", "\\\\")
+    # Escape double-quote
+    value = value.replace('"', '\\"')
+    return value
+
+
+def _xpath_string_literal(value: str) -> str:
+    """Return a safe XPath 1.0 string literal for the given value.
+
+    XPath 1.0 has no escape sequences inside string literals, so:
+    - No single quotes  → wrap in single quotes:  'value'
+    - No double quotes  → wrap in double quotes:  "value"
+    - Both present      → use concat() splitting on single-quotes:
+                          concat('it', "'", 's "fine"')
+    """
+    if "'" not in value:
+        return f"'{value}'"
+    if '"' not in value:
+        return f'"{value}"'
+    # Both quote types present: split on ' and interleave with the "'" literal
+    parts = value.split("'")
+    # Between every adjacent pair of parts we insert the single-quote literal
+    segments = []
+    for i, part in enumerate(parts):
+        if part:
+            segments.append(f"'{part}'")
+        if i < len(parts) - 1:
+            segments.append('"' + "'" + '"')
+    return f"concat({', '.join(segments)})"
+
+
 class SelectorGenerator:
     """Generates multiple selector strategies for elements."""
 
@@ -387,11 +547,22 @@ class SelectorGenerator:
         if node.attributes.get("name"):
             selectors["name"] = f'[name="{node.attributes["name"]}"]'
 
+        # href for anchor tags — most stable selector for links (contains path/ASIN/slug)
+        # Strip query params so the selector stays reusable across sessions.
+        # Escape special characters so the generated selectors are always valid.
+        if node.node_name.upper() == "A" and node.attributes.get("href"):
+            href = node.attributes["href"].split("?")[0].rstrip("/")
+            if href:
+                css_val = _escape_css_attr_value(href)
+                xpath_val = _xpath_string_literal(href)
+                selectors["href"] = f'a[href*="{css_val}"]'
+                selectors["href_xpath"] = f"//a[contains(@href, {xpath_val})]"
+
         # Text content (for buttons/links)
         if node.ax_name:
             selectors["text"] = node.ax_name
 
-        # XPath by attributes
+        # XPath by attributes (id / name / data-testid)
         attrs = []
         for key in ["id", "name", "data-testid"]:
             if node.attributes.get(key):
@@ -528,3 +699,4 @@ class SerializedDOM(BaseModel):
     selector_map: dict[int, dict] = Field(default_factory=dict)
     element_count: int = 0
     scroll_info: dict[str, float] = Field(default_factory=dict)
+    pagination_info: PaginationInfo = Field(default_factory=_empty_pagination_info)

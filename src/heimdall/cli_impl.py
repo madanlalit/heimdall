@@ -1,0 +1,372 @@
+"""
+Heimdall CLI - Command line interface.
+
+Usage:
+    heimdall run "Login and check dashboard" --url https://example.com
+    heimdall run task.yaml --output ./results
+"""
+
+import asyncio
+import importlib
+from pathlib import Path
+from typing import Annotated
+
+from heimdall.config import LLMProvider
+
+
+def _require_module(module_name: str):
+    """Import an optional CLI dependency or raise a clean ImportError."""
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as err:
+        raise ImportError(module_name) from err
+
+
+typer = _require_module("typer")
+dotenv = _require_module("dotenv")
+
+# Load .env file if present
+dotenv.load_dotenv()
+
+app = typer.Typer(
+    name="heimdall",
+    help="LLM-powered browser automation agent",
+    add_completion=False,
+)
+
+
+@app.command()
+def run(
+    task: Annotated[str, typer.Argument(help="Task description or path to YAML file")],
+    url: Annotated[str | None, typer.Option("--url", "-u", help="Starting URL")] = None,
+    output: Annotated[str, typer.Option("--output", "-o", help="Output directory")] = "./output",
+    headed: Annotated[bool, typer.Option("--headed", help="Run with visible browser")] = False,
+    llm: Annotated[
+        LLMProvider,
+        typer.Option(
+            "--llm",
+            "-l",
+            help="LLM provider (auto/openrouter/openai/anthropic/google/groq/bedrock)",
+        ),
+    ] = "auto",
+    model: Annotated[str | None, typer.Option("--model", "-m", help="LLM model name")] = None,
+    demo: Annotated[
+        bool, typer.Option("--demo", help="Enable demo mode with visual feedback")
+    ] = False,
+    vision: Annotated[
+        bool, typer.Option("--vision", help="Send screenshots to LLM for better context")
+    ] = False,
+    user_data_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--user-data-dir",
+            help="Chrome user data directory (e.g., ~/Library/Application Support/Google/Chrome)",
+        ),
+    ] = None,
+    profile_directory: Annotated[
+        str,
+        typer.Option(
+            "--profile-directory",
+            help="Chrome profile name (Default, Profile 1, etc.)",
+        ),
+    ] = "Default",
+    instructions: Annotated[
+        str | None,
+        typer.Option(
+            "--instructions",
+            "-i",
+            help="Path to file with custom instructions to extend the system prompt",
+        ),
+    ] = None,
+    save_trace: Annotated[
+        str | None,
+        typer.Option(
+            "--save-trace",
+            help="Save execution trace to JSON file (e.g., trace.json)",
+        ),
+    ] = None,
+    capture_screenshots: Annotated[
+        bool,
+        typer.Option(
+            "--capture-screenshots",
+            help="Capture screenshots at each step (requires --save-trace)",
+        ),
+    ] = False,
+    collector: Annotated[
+        bool,
+        typer.Option(
+            "--collector",
+            help="Enable detailed step collector for export (requires --save-trace)",
+        ),
+    ] = False,
+    run_id: Annotated[
+        str | None,
+        typer.Option(
+            "--run-id",
+            help=(
+                "Resume from a specific paused run ID. Use without this flag to start a fresh run."
+            ),
+        ),
+    ] = None,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="Enable verbose logging")
+    ] = False,
+) -> None:
+    """Run browser automation task."""
+    from typing import Literal
+
+    from heimdall.logging import setup_logging
+
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG" if verbose else "INFO"
+    setup_logging(level=level)
+
+    print("Heimdall - Browser Automation Agent")
+    print(f"Task: {task[:80]}{'...' if len(task) > 80 else ''}")
+
+    if url:
+        print(f"URL: {url}")
+
+    task_path = Path(task)
+    if task_path.exists() and task_path.suffix in [".yaml", ".yml", ".json"]:
+        task_content = _load_task_file(task_path)
+        print(f"Loaded task from: {task_path}")
+    else:
+        task_content = task
+
+    extend_system_prompt = None
+    if instructions:
+        instructions_path = Path(instructions)
+        if instructions_path.exists():
+            extend_system_prompt = instructions_path.read_text()
+            print(f"Loaded instructions from: {instructions_path}")
+        else:
+            print(f"Warning: Instructions file not found: {instructions}")
+
+    try:
+        result = asyncio.run(
+            _run_agent(
+                task=task_content,
+                url=url,
+                output_dir=output,
+                headless=not headed,
+                llm_provider=llm,
+                model=model,
+                demo_mode=demo,
+                use_vision=vision,
+                user_data_dir=user_data_dir,
+                profile_directory=profile_directory,
+                extend_system_prompt=extend_system_prompt,
+                save_trace=save_trace,
+                capture_screenshots=capture_screenshots,
+                use_collector=collector,
+                run_id=run_id,
+            )
+        )
+
+        if result.is_successful():
+            print("✓ Task completed successfully")
+            print(f"Steps: {len(result)}")
+            print(f"Duration: {result.total_duration_seconds():.2f}s")
+        else:
+            print("✗ Task failed")
+            if result.history and result.history[-1].results:
+                error = result.history[-1].results[-1].error
+                if error:
+                    print(f"Error: {error}")
+            raise typer.Exit(1)
+
+    except KeyboardInterrupt:
+        print("\nExecution interrupted by user")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise typer.Exit(1) from None
+
+
+async def _run_agent(
+    task: str,
+    url: str | None,
+    output_dir: str,
+    headless: bool,
+    llm_provider: LLMProvider,
+    model: str | None,
+    demo_mode: bool,
+    use_vision: bool = False,
+    user_data_dir: str | None = None,
+    profile_directory: str = "Default",
+    extend_system_prompt: str | None = None,
+    save_trace: str | None = None,
+    capture_screenshots: bool = False,
+    use_collector: bool = False,
+    run_id: str | None = None,
+):
+    """Run the agent with given configuration."""
+    from heimdall.agent import Agent, AgentConfig
+    from heimdall.browser import BrowserConfig, BrowserSession
+    from heimdall.dom import DomService
+    from heimdall.logging import logger
+
+    # Explicitly import actions to register them with the registry
+    from heimdall.tools import actions as _  # noqa: F401
+    from heimdall.tools import registry
+
+    print(f"Registered {len(registry.schema())} actions")  # Debug
+
+    from heimdall.agent.factory import create_llm_client
+
+    llm = create_llm_client(provider=llm_provider, model=model)
+
+    if user_data_dir:
+        # Use existing Chrome profile with cookies
+        expanded_dir = str(Path(user_data_dir).expanduser())
+        config = BrowserConfig(
+            headless=headless,
+            user_data_dir=expanded_dir,
+            profile_directory=profile_directory,
+            disable_extensions=False,  # Keep extensions when using existing profile
+        )
+        logger.info(f"Using Chrome profile: {expanded_dir}/{profile_directory}")
+    else:
+        # Create temp profile to avoid conflicts with running Chrome
+        import tempfile
+
+        temp_dir = tempfile.mkdtemp(prefix="heimdall_chrome_")
+        config = BrowserConfig(headless=headless, user_data_dir=temp_dir)
+        logger.info(f"Using temp profile: {temp_dir}")
+
+    session = BrowserSession(config=config)
+
+    try:
+        await session.start()
+
+        if url:
+            await session.navigate(url)
+
+        # Extract allowed domains from URL (restrict to starting domain)
+        allowed_domains: list[str] = []
+        if url:
+            from heimdall.utils.domain import extract_domain_from_url
+
+            domain = extract_domain_from_url(url)
+            if domain:
+                allowed_domains = [domain, f"*.{domain}"]
+                logger.info(f"Domain restriction: {allowed_domains}")
+
+        dom_service = DomService(session)
+        agent = Agent(
+            session=session,
+            dom_service=dom_service,
+            registry=registry,
+            llm_client=llm,
+            config=AgentConfig(
+                use_vision=use_vision,
+                demo_mode=demo_mode,
+                allowed_domains=allowed_domains,
+                extend_system_prompt=extend_system_prompt,
+                save_trace_path=save_trace,
+                capture_screenshots=capture_screenshots,
+                use_collector=use_collector,
+                workspace_path=output_dir,
+                enable_persistence=True,
+                run_id=run_id,
+            ),
+        )
+
+        result = await agent.run(task)
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        # Note: In real usage, we'd integrate Collector during execution
+
+        return result
+
+    finally:
+        await session.stop()
+        await llm.close()
+
+
+def _load_task_file(path: Path) -> str:
+    """Load task from JSON file."""
+    import json
+
+    if path.suffix in [".yaml", ".yml"]:
+        raise ValueError(
+            "YAML task files are no longer supported. Please use JSON format (.json) "
+            "or pass the task description as a string."
+        )
+
+    content = path.read_text()
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        # Fallback to plain text if not valid JSON
+        return content
+
+    if isinstance(data, dict):
+        task_val = data.get("task") or data.get("description")
+        return str(task_val) if task_val is not None else str(data)
+    elif isinstance(data, list):
+        return "\n".join(str(item) for item in data)
+    else:
+        return str(data)
+
+
+@app.command()
+def version() -> None:
+    """Show version information."""
+    print("Heimdall v0.1.0")
+
+
+@app.command()
+def init(
+    directory: Annotated[str, typer.Argument(help="Directory to initialize")] = ".",
+) -> None:
+    """Initialize Heimdall workspace."""
+    workspace = Path(directory)
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    config_path = workspace / "heimdall.json"
+    if not config_path.exists():
+        config_path.write_text("""{
+  "browser": {
+    "headless": true,
+    "timeout": 30
+  },
+  "llm": {
+    "provider": "auto",
+    "model": "gpt-4"
+  },
+  "output": {
+    "screenshots": true,
+    "network": true
+  }
+}
+""")
+        print(f"Created: {config_path}")
+
+    task_path = workspace / "task.json"
+    if not task_path.exists():
+        task_path.write_text("""{
+  "name": "Example Login",
+  "url": "https://example.com/login",
+  "steps": [
+    "Enter email into the email field",
+    "Enter password into the password field",
+    "Click the login button",
+    "Verify dashboard is displayed"
+  ]
+}
+""")
+        print(f"Created: {task_path}")
+
+    print("✓ Workspace initialized")
+
+
+def main() -> None:
+    """Main entry point."""
+    app()
+
+
+if __name__ == "__main__":
+    main()

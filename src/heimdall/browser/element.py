@@ -632,8 +632,8 @@ class Element:
                         "functionDeclaration": """
                             function() {
                                 // Check if it's a contenteditable element
-                                const hasContentEditable = this.getAttribute('contenteditable') === 'true' ||
-                                                          this.getAttribute('contenteditable') === '' ||
+                                const ce = this.getAttribute('contenteditable');
+                                const hasContentEditable = ce === 'true' || ce === '' ||
                                                           this.isContentEditable === true;
 
                                 if (hasContentEditable) {
@@ -657,7 +657,10 @@ class Element:
                                     this.dispatchEvent(new Event("input", { bubbles: true }));
                                     this.dispatchEvent(new Event("change", { bubbles: true }));
 
-                                    return {cleared: true, method: 'contenteditable', finalText: this.textContent};
+                                    return {
+                                        cleared: true, method: 'contenteditable',
+                                        finalText: this.textContent
+                                    };
                                 } else if (this.value !== undefined) {
                                     // For regular inputs with value property
                                     try {
@@ -670,7 +673,10 @@ class Element:
                                     this.dispatchEvent(new Event("change", { bubbles: true }));
                                     return {cleared: true, method: 'value', finalText: this.value};
                                 } else {
-                                    return {cleared: false, method: 'none', error: 'Not a supported input type'};
+                                    return {
+                                        cleared: false, method: 'none',
+                                        error: 'Not a supported input type'
+                                    };
                                 }
                             }
                         """,

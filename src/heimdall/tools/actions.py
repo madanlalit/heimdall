@@ -461,20 +461,11 @@ async def ask_human(
     Returns:
         The human's response with guidance
     """
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.prompt import Prompt
-
-    console = Console()
-
-    console.print()
-    console.print(
-        Panel(
-            f"[bold yellow]🤖 Agent needs help:[/bold yellow]\n\n{question}",
-            title="[bold blue]Human Input Required[/bold blue]",
-            border_style="blue",
-        )
-    )
+    print()
+    print("=" * 40)
+    print(f"🤖 Agent needs help:\n\n{question}")
+    print("=" * 40)
+    print()
 
     try:
         import asyncio
@@ -482,16 +473,15 @@ async def ask_human(
 
         # Use partial to avoid blocking the event loop with synchronous I/O
         prompt_func = partial(
-            Prompt.ask,
-            "[bold green]Your guidance[/bold green]",
-            console=console,
+            input,
+            "Your guidance: ",
         )
         response: str = await asyncio.to_thread(prompt_func)
 
         if not response.strip():
             return ActionResult.fail("No guidance provided")
 
-        console.print("[dim]Continuing with your guidance...[/dim]\n")
+        print("Continuing with your guidance...\n")
 
         return ActionResult.ok(
             f"Human guidance received: {response}",

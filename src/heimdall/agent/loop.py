@@ -82,6 +82,7 @@ class AgentConfig(BaseModel):
     # State persistence for pause/resume
     workspace_path: str | Path | None = None
     enable_persistence: bool = True
+    run_id: str | None = None  # Specific run ID to resume (if provided)
 
 
 class AgentState(BaseModel):
@@ -141,17 +142,26 @@ class Agent:
 
         # Initialize collector for detailed step capture
         self._collector = None
-        if self._config.use_collector and self._config.save_trace_path:
+        self._collector_output_dir: Path | None = None
+        if self._config.use_collector:
             from heimdall.collector import Collector
 
-            output_dir = Path(self._config.save_trace_path).parent
+            # Resolve output directory: prefer save_trace parent, then workspace, then ./output
+            if self._config.save_trace_path:
+                self._collector_output_dir = Path(self._config.save_trace_path).parent
+            elif self._config.workspace_path:
+                self._collector_output_dir = Path(self._config.workspace_path)
+            else:
+                self._collector_output_dir = Path("./output")
+
+            self._collector_output_dir.mkdir(parents=True, exist_ok=True)
             self._collector = Collector(
                 session,
-                output_dir,
-                capture_screenshots=self._config.capture_screenshots or self._config.use_collector,
+                self._collector_output_dir,
+                capture_screenshots=self._config.capture_screenshots,
                 capture_network=True,
             )
-            logger.info("Collector enabled - detailed step capture active")
+            logger.info(f"Collector enabled — output: {self._collector_output_dir}")
 
         # Initialize watchdogs
         self._watchdogs = {
@@ -174,10 +184,16 @@ class Agent:
 
         # Initialize state manager for persistence
         self._state_manager = None
+        self._run_id: str | None = None
         if self._config.enable_persistence and self._config.workspace_path:
             from heimdall.persistence import StateManager
 
-            self._state_manager = StateManager(Path(self._config.workspace_path))
+            # Use provided run_id or generate new one
+            self._run_id = self._config.run_id or str(uuid.uuid4())[:8]
+            self._state_manager = StateManager(
+                Path(self._config.workspace_path), run_id=self._run_id
+            )
+            logger.info(f"Run ID: {self._run_id}")
             logger.info(f"State persistence enabled - workspace: {self._config.workspace_path}")
 
         self._subscribe_to_events()
@@ -200,16 +216,37 @@ class Agent:
         logger.info(f"Starting task: {task[:80]}")
         self._task = task
 
-        # Try to resume from state if available
+        # Try to resume from state if run_id was provided
         restored = False
         if (
             self._config.enable_persistence
+            and self._config.run_id  # Only resume if specific run_id provided
             and self._state_manager
             and self._state_manager.has_saved_state
         ):
             try:
                 persisted = await self._state_manager.load_state()
-                if persisted and persisted.task == task and not persisted.done:
+
+                # Check various conditions and provide specific error messages
+                if persisted and persisted.done:
+                    logger.warning(
+                        f"Run {self._run_id} is already completed. "
+                        f"Please start a new run without --run-id flag."
+                    )
+                elif persisted and persisted.task != task:
+                    logger.warning(
+                        f"Run {self._run_id} has a different task. "
+                        f"The saved task does not match the current task."
+                    )
+                elif persisted and not persisted.paused:
+                    logger.warning(
+                        f"Run {self._run_id} was not paused (possibly crashed). "
+                        f"Cannot resume non-paused sessions."
+                    )
+                elif (
+                    persisted and persisted.task == task and not persisted.done and persisted.paused
+                ):
+                    # Valid resume - restore state
                     self._session_id = persisted.session_id
                     self._state = AgentState(
                         step_count=persisted.step_count,
@@ -226,14 +263,17 @@ class Agent:
 
                     restored = True
                     logger.info(
-                        f"Resumed session {self._session_id} at step {self._state.step_count}"
+                        f"Resumed run {self._run_id} (session {self._session_id}) "
+                        f"at step {self._state.step_count}"
                     )
             except Exception as e:
-                logger.warning(f"Failed to resume state: {e}")
+                logger.warning(f"Failed to resume run {self._run_id}: {e}")
 
         if not restored:
             self._state = AgentState()
             self._history = AgentHistoryList()
+            if self._run_id:
+                logger.info(f"Started new run: {self._run_id}")
 
         self._paused = False
         self._pause_requested = False
@@ -311,17 +351,20 @@ class Agent:
                     logger.error(f"Failed to save trace: {e}")
 
             # Export collector data (success or failure/interrupt)
-            if self._collector and self._config.save_trace_path:
+            if self._collector and self._collector_output_dir:
                 try:
                     from heimdall.collector import Exporter
 
-                    exporter = Exporter(Path(self._config.save_trace_path).parent)
+                    exporter = Exporter(self._collector_output_dir)
+                    collected = self._collector.export()["steps"]
                     await asyncio.to_thread(
-                        exporter.export_steps,
-                        self._collector.export()["steps"],
-                        "collector_steps.json",
+                        exporter.export_steps, collected, "collector_steps.json"
                     )
-                    logger.info("Collector steps exported")
+                    await asyncio.to_thread(exporter.export_selectors, collected, "selectors.json")
+                    logger.info(
+                        f"Collector exported to {self._collector_output_dir}: "
+                        "collector_steps.json, selectors.json"
+                    )
                 except Exception as e:
                     logger.error(f"Failed to export collector data: {e}")
 
@@ -331,26 +374,17 @@ class Agent:
 
     async def _handle_pause(self) -> None:
         """Handle pause request - save state and wait for resume."""
-        from rich.console import Console
-
-        console = Console()
-
         self._paused = True
         await self._save_state(paused=True)
 
-        console.print("\n[bold yellow]⏸️  Execution paused[/bold yellow]")
-        console.print(f"   Step: {self._state.step_count}/{self._config.max_steps}")
-        console.print(f"   Session: {self._session_id}")
+        print("\n⏸️  Execution paused")
+        print(f"   Step: {self._state.step_count}/{self._config.max_steps}")
+        print(f"   Session: {self._session_id}")
 
         if self._state_manager:
-            console.print(
-                f"   State saved to: {self._state_manager.workspace}/.heimdall_state.json"
-            )
+            print(f"   State saved to: {self._state_manager.workspace}/.heimdall_state.json")
 
-        console.print(
-            "\n   Press [bold green]Enter[/bold green] to resume, "
-            "or [bold red]Ctrl+C[/bold red] to exit...\n"
-        )
+        print("\n   Press Enter to resume, or Ctrl+C to exit...\n")
 
         # Clear event from previous runs
         self._resume_event.clear()
@@ -376,7 +410,7 @@ class Agent:
             # Loop in run() will handle the break
             pass
         else:
-            console.print("[bold green]▶️  Resuming execution...[/bold green]\n")
+            print("▶️  Resuming execution...\n")
             self._paused = False
 
     async def _save_state(self, paused: bool = False) -> None:
@@ -395,7 +429,7 @@ class Agent:
             progress = TaskProgress(
                 completed=[],
                 pending=last_output.todo if last_output and last_output.todo else [],
-                current=last_output.next_goal if last_output else "",
+                current=last_output.next_goal or "" if last_output else "",
             )
 
             state = PersistedState(
@@ -599,18 +633,16 @@ class Agent:
                 self._state.total_failures += 1
                 logger.warning(f"Action failed: {exec_result.error}")
 
-        if self._collector and self._config.save_trace_path:
+        if self._collector and self._collector_output_dir:
             await self._collector.end_step()
             try:
                 from heimdall.collector import Exporter
 
-                exporter = Exporter(Path(self._config.save_trace_path).parent)
-                await asyncio.to_thread(
-                    exporter.export_steps,
-                    self._collector.export()["steps"],
-                    "collector_steps.json",
-                )
-                logger.debug("Collector steps exported (incremental)")
+                exporter = Exporter(self._collector_output_dir)
+                collected = self._collector.export()["steps"]
+                await asyncio.to_thread(exporter.export_steps, collected, "collector_steps.json")
+                await asyncio.to_thread(exporter.export_selectors, collected, "selectors.json")
+                logger.debug("Collector export updated (steps + selectors)")
             except Exception as e:
                 logger.warning(f"Failed to export collector data: {e}")
 

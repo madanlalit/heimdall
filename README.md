@@ -37,6 +37,30 @@ Or with [uv](https://github.com/astral-sh/uv):
 uv add heimdall
 ```
 
+LLM providers are optional extras:
+
+```bash
+# OpenAI
+pip install "heimdall[openai]"
+
+# OpenRouter
+pip install "heimdall[openrouter]"
+
+# Anthropic
+pip install "heimdall[anthropic]"
+
+# Groq
+pip install "heimdall[groq]"
+
+# AWS Bedrock (boto3)
+pip install "heimdall[bedrock]"
+
+# Everything
+pip install "heimdall[all]"
+```
+
+By default, Heimdall uses `--llm auto` and selects an installed provider based on available API keys/SDKs.
+
 <br/>
 
 ## Usage
@@ -161,4 +185,3 @@ MIT © [madanlalit](https://github.com/madanlalit)
 <div align="center">
   <sub>Built with <a href="https://github.com/browser-use/cdp-use">cdp-use</a></sub>
 </div>
-

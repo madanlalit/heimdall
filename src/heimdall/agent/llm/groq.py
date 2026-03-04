@@ -1,5 +1,8 @@
 """
-OpenAI LLM Client - OpenAI API integration for Heimdall.
+Groq LLM Client - Groq API integration for Heimdall.
+
+Groq provides high-speed inference using their LPU hardware.
+Uses OpenAI-compatible API.
 """
 
 import logging
@@ -10,13 +13,13 @@ from heimdall.agent.llm.base import BaseLLM
 logger = logging.getLogger(__name__)
 
 
-class OpenAILLM(BaseLLM):
-    """OpenAI API client for chat completions with tool calling."""
+class GroqLLM(BaseLLM):
+    """Groq API client for chat completions with tool calling."""
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gpt-4",
+        model: str = "llama-3.3-70b-versatile",
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ):
@@ -24,16 +27,15 @@ class OpenAILLM(BaseLLM):
         import os
 
         try:
-            openai_module = importlib.import_module("openai")
+            groq_module = importlib.import_module("groq")
         except ImportError as err:
             raise ImportError(
-                "openai is required for the OpenAI provider. "
-                'Install with: pip install "heimdall[openai]"'
+                'groq is required for the Groq provider. Install with: pip install "heimdall[groq]"'
             ) from err
 
-        AsyncOpenAI = openai_module.AsyncOpenAI
-        self._client = AsyncOpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY"),
+        AsyncGroq = groq_module.AsyncGroq
+        self._client = AsyncGroq(
+            api_key=api_key or os.getenv("GROQ_API_KEY"),
         )
         self._model = model
         self._temperature = temperature

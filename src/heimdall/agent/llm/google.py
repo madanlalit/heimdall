@@ -2,6 +2,8 @@
 Google Gemini LLM Client - Google AI Gemini API integration for Heimdall.
 """
 
+import base64
+import binascii
 import logging
 import os
 from typing import Any
@@ -39,6 +41,66 @@ class GoogleLLM(BaseLLM):
         self._temperature = temperature
         self._max_tokens = max_tokens
 
+    @staticmethod
+    def _data_url_to_part(data_url: str, types_module: Any) -> Any:
+        """Convert data URL image to Gemini Part."""
+        if not data_url.startswith("data:"):
+            return types_module.Part.from_uri(file_uri=data_url)
+
+        header, encoded = data_url.split(",", 1)
+        if ";base64" not in header:
+            raise ValueError("Only base64 data URLs are supported for image_url parts")
+
+        mime_type = header[5:].replace(";base64", "")
+        if not mime_type:
+            raise ValueError("Missing MIME type in data URL")
+
+        try:
+            image_bytes = base64.b64decode(encoded)
+        except binascii.Error as exc:
+            raise ValueError("Invalid base64 image data in data URL") from exc
+
+        return types_module.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+
+    def _message_content_to_parts(self, content: Any, types_module: Any) -> list[Any]:
+        """Convert OpenAI-style message content into Gemini parts."""
+        if isinstance(content, str):
+            return [types_module.Part.from_text(text=content)]
+
+        if not isinstance(content, list):
+            raise TypeError(f"Unsupported message content type: {type(content).__name__}")
+
+        parts: list[Any] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(types_module.Part.from_text(text=item))
+                continue
+
+            if not isinstance(item, dict):
+                raise TypeError(f"Unsupported message content item type: {type(item).__name__}")
+
+            item_type = item.get("type")
+            if item_type == "text":
+                text = item.get("text", "")
+                if not isinstance(text, str):
+                    raise TypeError("Text content must be a string")
+                parts.append(types_module.Part.from_text(text=text))
+                continue
+
+            if item_type == "image_url":
+                image_url = item.get("image_url")
+                if not isinstance(image_url, dict):
+                    raise TypeError("image_url content must be an object")
+                url = image_url.get("url")
+                if not isinstance(url, str):
+                    raise TypeError("image_url.url must be a string")
+                parts.append(self._data_url_to_part(url, types_module))
+                continue
+
+            raise ValueError(f"Unsupported message content part type: {item_type}")
+
+        return parts
+
     async def chat_completion(
         self,
         messages: list[dict[str, Any]],
@@ -56,6 +118,8 @@ class GoogleLLM(BaseLLM):
         """
         from google.genai import types
 
+        response_schema = kwargs.pop("response_schema", None)
+
         # Convert messages to Gemini format
         system_instruction = None
         gemini_contents: list[types.Content] = []
@@ -68,11 +132,17 @@ class GoogleLLM(BaseLLM):
                 system_instruction = content
             elif role == "user":
                 gemini_contents.append(
-                    types.Content(role="user", parts=[types.Part.from_text(text=content)])
+                    types.Content(
+                        role="user",
+                        parts=self._message_content_to_parts(content, types),
+                    )
                 )
             elif role == "assistant":
                 gemini_contents.append(
-                    types.Content(role="model", parts=[types.Part.from_text(text=content)])
+                    types.Content(
+                        role="model",
+                        parts=self._message_content_to_parts(content, types),
+                    )
                 )
             elif role == "tool":
                 # Tool results need to be handled specially
@@ -126,6 +196,7 @@ class GoogleLLM(BaseLLM):
             system_instruction=system_instruction,
             tools=gemini_tools,
             tool_config=tool_config,
+            response_schema=response_schema,
         )
 
         response = await self._client.aio.models.generate_content(
