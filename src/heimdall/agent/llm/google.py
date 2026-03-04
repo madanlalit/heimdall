@@ -4,6 +4,7 @@ Google Gemini LLM Client - Google AI Gemini API integration for Heimdall.
 
 import base64
 import binascii
+import importlib
 import logging
 import os
 from typing import Any
@@ -32,9 +33,16 @@ class GoogleLLM(BaseLLM):
             temperature: Sampling temperature
             max_tokens: Max tokens to generate
         """
-        from google import genai
+        try:
+            genai_module = importlib.import_module("google.genai")
+            self._types = importlib.import_module("google.genai.types")
+        except ImportError as err:
+            raise ImportError(
+                "google-genai is required for the Google provider. "
+                'Install with: pip install "heimdall[google]"'
+            ) from err
 
-        self._client = genai.Client(
+        self._client = genai_module.Client(
             api_key=api_key or os.getenv("GOOGLE_API_KEY"),
         )
         self._model = model
@@ -116,13 +124,12 @@ class GoogleLLM(BaseLLM):
             tools: Optional tool definitions
             tool_choice: Tool choice mode ('auto', 'required', 'none')
         """
-        from google.genai import types
-
         response_schema = kwargs.pop("response_schema", None)
+        types_module = self._types
 
         # Convert messages to Gemini format
         system_instruction = None
-        gemini_contents: list[types.Content] = []
+        gemini_contents: list[Any] = []
 
         for msg in messages:
             role = msg["role"]
@@ -132,25 +139,25 @@ class GoogleLLM(BaseLLM):
                 system_instruction = content
             elif role == "user":
                 gemini_contents.append(
-                    types.Content(
+                    types_module.Content(
                         role="user",
-                        parts=self._message_content_to_parts(content, types),
+                        parts=self._message_content_to_parts(content, types_module),
                     )
                 )
             elif role == "assistant":
                 gemini_contents.append(
-                    types.Content(
+                    types_module.Content(
                         role="model",
-                        parts=self._message_content_to_parts(content, types),
+                        parts=self._message_content_to_parts(content, types_module),
                     )
                 )
             elif role == "tool":
                 # Tool results need to be handled specially
                 gemini_contents.append(
-                    types.Content(
+                    types_module.Content(
                         role="user",
                         parts=[
-                            types.Part.from_function_response(
+                            types_module.Part.from_function_response(
                                 name=msg.get("name", "tool"),
                                 response={"result": content},
                             )
@@ -165,32 +172,38 @@ class GoogleLLM(BaseLLM):
             for tool in tools:
                 func = tool["function"]
                 function_declarations.append(
-                    types.FunctionDeclaration(
+                    types_module.FunctionDeclaration(
                         name=func["name"],
                         description=func.get("description", ""),
                         parameters=func.get("parameters"),
                     )
                 )
-            gemini_tools = [types.Tool(function_declarations=function_declarations)]
+            gemini_tools = [types_module.Tool(function_declarations=function_declarations)]
 
         # Configure tool usage
         tool_config = None
         if tools:
             if tool_choice == "required":
-                tool_config = types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(mode="ANY")
+                tool_config = types_module.ToolConfig(
+                    function_calling_config=types_module.FunctionCallingConfig(
+                        mode=types_module.FunctionCallingConfigMode.ANY
+                    )
                 )
             elif tool_choice == "none":
-                tool_config = types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(mode="NONE")
+                tool_config = types_module.ToolConfig(
+                    function_calling_config=types_module.FunctionCallingConfig(
+                        mode=types_module.FunctionCallingConfigMode.NONE
+                    )
                 )
             else:  # auto
-                tool_config = types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(mode="AUTO")
+                tool_config = types_module.ToolConfig(
+                    function_calling_config=types_module.FunctionCallingConfig(
+                        mode=types_module.FunctionCallingConfigMode.AUTO
+                    )
                 )
 
         # Build generation config
-        generation_config = types.GenerateContentConfig(
+        generation_config = types_module.GenerateContentConfig(
             temperature=self._temperature,
             max_output_tokens=self._max_tokens,
             system_instruction=system_instruction,
