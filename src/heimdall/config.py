@@ -10,6 +10,7 @@ from typing import Literal
 DEFAULT_OPENAI_MODEL = "gpt-4"
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-sonnet-20241022"
 DEFAULT_OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet"
+DEFAULT_GOOGLE_MODEL = "gemini-2.0-flash"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_BEDROCK_MODEL = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
@@ -23,4 +24,4 @@ DEFAULT_MAX_STEPS = 50
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_MAX_CONSECUTIVE_FAILURES = 5
 
-LLMProvider = Literal["auto", "openai", "anthropic", "openrouter", "groq", "bedrock"]
+LLMProvider = Literal["auto", "openai", "anthropic", "openrouter", "google", "groq", "bedrock"]

@@ -12,6 +12,7 @@ from heimdall.agent.llm import AnthropicLLM, OpenAILLM
 from heimdall.config import (
     DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_BEDROCK_MODEL,
+    DEFAULT_GOOGLE_MODEL,
     DEFAULT_GROQ_MODEL,
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
@@ -41,6 +42,8 @@ def _resolve_auto_provider() -> LLMProvider:
         return "openai"
     if os.getenv("ANTHROPIC_API_KEY") and _module_available("anthropic"):
         return "anthropic"
+    if os.getenv("GOOGLE_API_KEY") and _module_available("google.genai"):
+        return "google"
     if os.getenv("GROQ_API_KEY") and _module_available("groq"):
         return "groq"
     if _module_available("boto3") and (
@@ -56,6 +59,8 @@ def _resolve_auto_provider() -> LLMProvider:
         return "openai"
     if _module_available("anthropic"):
         return "anthropic"
+    if _module_available("google.genai"):
+        return "google"
     if _module_available("groq"):
         return "groq"
     if _module_available("boto3"):
@@ -64,7 +69,8 @@ def _resolve_auto_provider() -> LLMProvider:
     raise ImportError(
         "No LLM provider SDK is installed. Install one with: "
         'pip install "heimdall[openai]" or "heimdall[openrouter]" or '
-        '"heimdall[anthropic]" or "heimdall[groq]" or "heimdall[bedrock]".'
+        '"heimdall[anthropic]" or "heimdall[google]" or "heimdall[groq]" or '
+        '"heimdall[bedrock]".'
     )
 
 
@@ -73,7 +79,7 @@ def create_llm_client(provider: LLMProvider, model: str | None = None) -> "BaseL
     Create LLM client based on provider and model.
 
     Args:
-        provider: 'auto', 'openai', 'anthropic', 'openrouter', 'groq', or 'bedrock'
+        provider: 'auto', 'openai', 'anthropic', 'openrouter', 'google', 'groq', or 'bedrock'
         model: Optional model name override
 
     Returns:
@@ -88,6 +94,10 @@ def create_llm_client(provider: LLMProvider, model: str | None = None) -> "BaseL
         from heimdall.agent.llm import OpenRouterLLM
 
         return OpenRouterLLM(model=model or DEFAULT_OPENROUTER_MODEL)
+    elif resolved_provider == "google":
+        from heimdall.agent.llm import GoogleLLM
+
+        return GoogleLLM(model=model or DEFAULT_GOOGLE_MODEL)
     elif resolved_provider == "groq":
         from heimdall.agent.llm import GroqLLM
 
