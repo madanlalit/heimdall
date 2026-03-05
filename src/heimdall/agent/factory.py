@@ -8,12 +8,13 @@ import os
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
-from heimdall.agent.llm import AnthropicLLM, OpenAILLM
+from heimdall.agent.llm import AnthropicLLM, OllamaLLM, OpenAILLM
 from heimdall.config import (
     DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_BEDROCK_MODEL,
     DEFAULT_GOOGLE_MODEL,
     DEFAULT_GROQ_MODEL,
+    DEFAULT_OLLAMA_MODEL,
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
     LLMProvider,
@@ -46,6 +47,8 @@ def _resolve_auto_provider() -> LLMProvider:
         return "google"
     if os.getenv("GROQ_API_KEY") and _module_available("groq"):
         return "groq"
+    if (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST")) and _module_available("openai"):
+        return "ollama"
     if _module_available("boto3") and (
         os.getenv("AWS_ACCESS_KEY_ID")
         or os.getenv("AWS_PROFILE")
@@ -70,7 +73,7 @@ def _resolve_auto_provider() -> LLMProvider:
         "No LLM provider SDK is installed. Install one with: "
         'pip install "heimdall[openai]" or "heimdall[openrouter]" or '
         '"heimdall[anthropic]" or "heimdall[google]" or "heimdall[groq]" or '
-        '"heimdall[bedrock]".'
+        '"heimdall[bedrock]" or "heimdall[ollama]".'
     )
 
 
@@ -79,7 +82,8 @@ def create_llm_client(provider: LLMProvider, model: str | None = None) -> "BaseL
     Create LLM client based on provider and model.
 
     Args:
-        provider: 'auto', 'openai', 'anthropic', 'openrouter', 'google', 'groq', or 'bedrock'
+        provider: 'auto', 'openai', 'anthropic', 'openrouter', 'google', 'groq',
+            'bedrock', or 'ollama'
         model: Optional model name override
 
     Returns:
@@ -106,5 +110,7 @@ def create_llm_client(provider: LLMProvider, model: str | None = None) -> "BaseL
         from heimdall.agent.llm import BedrockLLM
 
         return BedrockLLM(model=model or DEFAULT_BEDROCK_MODEL)
+    elif resolved_provider == "ollama":
+        return OllamaLLM(model=model or DEFAULT_OLLAMA_MODEL)
     else:
         return OpenAILLM(model=model or DEFAULT_OPENAI_MODEL)

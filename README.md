@@ -49,6 +49,9 @@ pip install "heimdall[openrouter]"
 # Anthropic
 pip install "heimdall[anthropic]"
 
+# Ollama (local)
+pip install "heimdall[ollama]"
+
 # Groq
 pip install "heimdall[groq]"
 
