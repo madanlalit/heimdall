@@ -44,6 +44,9 @@ openai = [
 openrouter = [
     "openai>=1.0.0",
 ]
+ollama = [
+    "openai>=1.0.0",
+]
 anthropic = [
     "anthropic>=0.18.0",
 ]

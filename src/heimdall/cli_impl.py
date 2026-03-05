@@ -46,7 +46,7 @@ def run(
         typer.Option(
             "--llm",
             "-l",
-            help="LLM provider (auto/openrouter/openai/anthropic/google/groq/bedrock)",
+            help="LLM provider (auto/openrouter/openai/anthropic/google/groq/bedrock/ollama)",
         ),
     ] = "auto",
     model: Annotated[str | None, typer.Option("--model", "-m", help="LLM model name")] = None,

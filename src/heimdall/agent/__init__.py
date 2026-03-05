@@ -5,7 +5,7 @@ Provides the main agent loop and LLM integration.
 """
 
 from heimdall.agent.filesystem import FileSystem
-from heimdall.agent.llm import AnthropicLLM, BaseLLM, OpenAILLM
+from heimdall.agent.llm import AnthropicLLM, BaseLLM, OllamaLLM, OpenAILLM
 from heimdall.agent.loop import Agent, AgentConfig, AgentState, MessageBuilder
 from heimdall.agent.views import (
     ActionResult,
@@ -23,6 +23,7 @@ __all__ = [
     "BaseLLM",
     "OpenAILLM",
     "AnthropicLLM",
+    "OllamaLLM",
     "AgentOutput",
     "AgentHistory",
     "AgentHistoryList",
