@@ -547,11 +547,14 @@ async def extract(
     if not page_text and not page_links:
         return ActionResult.fail("No page content available to extract")
 
-    rendered_links = "\n".join(
-        f"- {(link.get('text') or '(no text)')} -> {link.get('href', '')}"
-        for link in page_links
-        if isinstance(link, dict)
-    ) or "None"
+    rendered_links = (
+        "\n".join(
+            f"- {(link.get('text') or '(no text)')} -> {link.get('href', '')}"
+            for link in page_links
+            if isinstance(link, dict)
+        )
+        or "None"
+    )
 
     system_prompt = (
         "You extract information from webpages. Use only the provided page context. "
