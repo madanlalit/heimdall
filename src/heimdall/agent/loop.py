@@ -468,6 +468,7 @@ class Agent:
             self._session,
             dom_state,
             allowed_domains=self._config.allowed_domains,
+            llm=self._llm,
         )
 
         # Start collector step capture

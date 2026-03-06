@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 class BaseLLM(ABC):
     """Abstract base class for LLM providers."""
 
+    supports_response_schema = False
+
     @abstractmethod
     async def chat_completion(
         self,

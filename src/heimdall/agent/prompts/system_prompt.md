@@ -107,6 +107,7 @@ You can specify up to 3 actions per step. Available actions:
 - switch_tab: Switch to tab by index - {"switch_tab": {"tab_index": N}}
 - close_tab: Close tab by index - {"close_tab": {"tab_index": N}}
 - get_tabs: List all open tabs - {"get_tabs": {}}
+- extract: Extract information from the current page - {"extract": {"goal": "...", "json_schema": {...}}}
 
 Prefer index-based clicks when a target element is available. Use `x`/`y` clicks for canvas UIs, maps, or other visual targets that are not represented as usable DOM elements.
 
