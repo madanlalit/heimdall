@@ -892,6 +892,8 @@ class Agent:
             description = ""
             if "index" in action_args:
                 description = f"element [{action_args['index']}]"
+            elif "x" in action_args and "y" in action_args:
+                description = f"viewport ({action_args['x']}, {action_args['y']})"
             elif "url" in action_args:
                 description = action_args["url"][:50]
             elif "text" in action_args:

@@ -88,7 +88,7 @@ IMPORTANT:
 
 <action_rules>
 You can specify up to 3 actions per step. Available actions:
-- click: Click element by index - {"click": {"index": N}}
+- click: Click by element index or viewport coordinates - {"click": {"index": N}} or {"click": {"x": X, "y": Y}}
 - type_text: Type into input - {"type_text": {"index": N, "text": "..."}}
 - navigate: Go to URL - {"navigate": {"url": "..."}} 
 - scroll: Scroll page - {"scroll": {"direction": "up|down"}}
@@ -107,6 +107,8 @@ You can specify up to 3 actions per step. Available actions:
 - switch_tab: Switch to tab by index - {"switch_tab": {"tab_index": N}}
 - close_tab: Close tab by index - {"close_tab": {"tab_index": N}}
 - get_tabs: List all open tabs - {"get_tabs": {}}
+
+Prefer index-based clicks when a target element is available. Use `x`/`y` clicks for canvas UIs, maps, or other visual targets that are not represented as usable DOM elements.
 
 Actions are executed sequentially. If the page changes, remaining actions may be skipped.
 
@@ -182,6 +184,7 @@ Example complete responses:
 <critical_rules>
 IMPORTANT: Always use the exact action format: {"action_name": {"param": "value"}}
 - CORRECT: {"click": {"index": 5}}
+- CORRECT: {"click": {"x": 320, "y": 180}}
 - CORRECT: {"scroll": {"direction": "down"}}
 - CORRECT: {"navigate": {"url": "https://example.com"}}
 - WRONG: action_name("click") - This will fail!
@@ -205,4 +208,3 @@ The todo list should contain remaining tasks. Remove completed tasks and add new
 The action list must contain at least one action and at most 3 actions.
 Never respond with just text - always use this JSON format.
 </output>
-

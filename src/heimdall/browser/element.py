@@ -36,6 +36,62 @@ class BoundingBox:
         return self.y + self.height / 2
 
 
+async def dispatch_mouse_click(
+    session: "BrowserSession",
+    x: int,
+    y: int,
+    button: Literal["left", "right", "middle"] = "left",
+    click_count: int = 1,
+    modifiers: int = 0,
+) -> None:
+    """Dispatch a mouse click at viewport CSS coordinates."""
+    client = session.cdp_client
+    session_id = session.session_id
+
+    await client.send.Input.dispatchMouseEvent(
+        {"type": "mouseMoved", "x": x, "y": y},
+        session_id=session_id,
+    )
+    await asyncio.sleep(0.03)
+
+    try:
+        await asyncio.wait_for(
+            client.send.Input.dispatchMouseEvent(
+                {
+                    "type": "mousePressed",
+                    "x": x,
+                    "y": y,
+                    "button": button,
+                    "clickCount": click_count,
+                    "modifiers": modifiers,
+                },
+                session_id=session_id,
+            ),
+            timeout=1.0,
+        )
+        await asyncio.sleep(0.05)
+    except TimeoutError:
+        logger.debug("mousePressed timed out")
+
+    try:
+        await asyncio.wait_for(
+            client.send.Input.dispatchMouseEvent(
+                {
+                    "type": "mouseReleased",
+                    "x": x,
+                    "y": y,
+                    "button": button,
+                    "clickCount": click_count,
+                    "modifiers": modifiers,
+                },
+                session_id=session_id,
+            ),
+            timeout=2.0,
+        )
+    except TimeoutError:
+        logger.debug("mouseReleased timed out")
+
+
 class Element:
     """
     Browser element operations using BackendNodeId.
@@ -277,59 +333,19 @@ class Element:
         self,
         x: int,
         y: int,
-        button: str,
+        button: Literal["left", "right", "middle"],
         click_count: int,
         modifiers: int,
     ) -> None:
         """Dispatch mouse click events via CDP."""
-        client = self._session.cdp_client
-        session_id = self._session.session_id
-
-        # Move mouse to element
-        await client.send.Input.dispatchMouseEvent(
-            {"type": "mouseMoved", "x": x, "y": y},
-            session_id=session_id,
+        await dispatch_mouse_click(
+            self._session,
+            x=x,
+            y=y,
+            button=button,
+            click_count=click_count,
+            modifiers=modifiers,
         )
-        await asyncio.sleep(0.03)
-
-        # Mouse down with timeout
-        try:
-            await asyncio.wait_for(
-                client.send.Input.dispatchMouseEvent(
-                    {
-                        "type": "mousePressed",
-                        "x": x,
-                        "y": y,
-                        "button": button,
-                        "clickCount": click_count,
-                        "modifiers": modifiers,
-                    },
-                    session_id=session_id,
-                ),
-                timeout=1.0,
-            )
-            await asyncio.sleep(0.05)
-        except TimeoutError:
-            logger.debug("mousePressed timed out")
-
-        # Mouse up with timeout
-        try:
-            await asyncio.wait_for(
-                client.send.Input.dispatchMouseEvent(
-                    {
-                        "type": "mouseReleased",
-                        "x": x,
-                        "y": y,
-                        "button": button,
-                        "clickCount": click_count,
-                        "modifiers": modifiers,
-                    },
-                    session_id=session_id,
-                ),
-                timeout=2.0,
-            )
-        except TimeoutError:
-            logger.debug("mouseReleased timed out")
 
     async def _js_click(self) -> None:
         """Click element using JavaScript as fallback."""

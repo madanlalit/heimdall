@@ -87,13 +87,104 @@ async def with_retry(
     return ActionResult.fail(error_detail)
 
 
-@action("Click element by index from the DOM list")
+async def _convert_viewport_click_coordinates(
+    x: int,
+    y: int,
+    session: "BrowserSession",
+    dom_state: "SerializedDOM | None" = None,
+) -> tuple[int, int, dict[str, float]]:
+    """
+    Convert screenshot/viewport coordinates into CDP viewport CSS coordinates.
+
+    CDP mouse events expect coordinates in CSS pixels relative to the main
+    frame viewport. When the visual viewport is zoomed or offset, normalize
+    the incoming coordinates before dispatching the click.
+    """
+    layout_metrics = await session.cdp_client.send.Page.getLayoutMetrics(
+        session_id=session.session_id,
+    )
+    visual_viewport = layout_metrics.get("visualViewport", {}) or {}
+    layout_viewport = layout_metrics.get("layoutViewport", {}) or {}
+    scroll_info = dom_state.scroll_info if dom_state else {}
+
+    scale = float(visual_viewport.get("scale") or 1.0)
+    if scale <= 0:
+        scale = 1.0
+
+    offset_x = float(visual_viewport.get("offsetX") or 0.0)
+    offset_y = float(visual_viewport.get("offsetY") or 0.0)
+
+    converted_x = int(round(offset_x + (x / scale)))
+    converted_y = int(round(offset_y + (y / scale)))
+
+    viewport_width = layout_viewport.get("clientWidth") or scroll_info.get("width")
+    viewport_height = layout_viewport.get("clientHeight") or scroll_info.get("height")
+
+    if viewport_width is not None and not 0 <= converted_x < int(viewport_width):
+        raise ValueError(
+            f"Converted click x={converted_x} is outside the viewport width {int(viewport_width)}"
+        )
+    if viewport_height is not None and not 0 <= converted_y < int(viewport_height):
+        raise ValueError(
+            f"Converted click y={converted_y} is outside the viewport height {int(viewport_height)}"
+        )
+
+    return (
+        converted_x,
+        converted_y,
+        {
+            "scale": scale,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+        },
+    )
+
+
+@action("Click element by index from the DOM list or by viewport coordinates")
 async def click(
-    index: int,
     session: "BrowserSession",
     dom_state: "SerializedDOM",
+    index: int | None = None,
+    x: int | None = None,
+    y: int | None = None,
 ) -> ActionResult:
-    """Click on an element by its index."""
+    """Click an element by DOM index or a point in the current viewport."""
+    if index is not None and (x is not None or y is not None):
+        return ActionResult.fail("Click accepts either an index or x/y coordinates, not both")
+
+    if index is None:
+        if x is None or y is None:
+            return ActionResult.fail(
+                "Click requires either an index or both x and y viewport coordinates"
+            )
+        if x < 0 or y < 0:
+            return ActionResult.fail("Click coordinates must be non-negative")
+
+        from heimdall.browser.element import dispatch_mouse_click
+
+        async def _do_coordinate_click():
+            try:
+                click_x, click_y, conversion = await _convert_viewport_click_coordinates(
+                    x=x,
+                    y=y,
+                    session=session,
+                    dom_state=dom_state,
+                )
+                await dispatch_mouse_click(session, x=click_x, y=click_y)
+                return ActionResult.ok(
+                    f"Clicked viewport coordinates ({x}, {y})",
+                    viewport_coordinates={"x": x, "y": y},
+                    layout_coordinates={"x": click_x, "y": click_y},
+                    conversion=conversion,
+                )
+            except Exception as e:
+                return ActionResult.fail(f"Click failed: {e}")
+
+        return await with_retry(
+            _do_coordinate_click,
+            element_context=f"viewport coordinates ({x}, {y})",
+        )
+
     from heimdall.browser.element import Element
 
     if index not in dom_state.selector_map:
