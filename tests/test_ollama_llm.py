@@ -140,4 +140,3 @@ class TestFactory:
         monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
         assert factory._resolve_auto_provider() == "openai"
-
