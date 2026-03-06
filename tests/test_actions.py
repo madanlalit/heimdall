@@ -41,6 +41,21 @@ def _session(layout_metrics: dict | None = None):
     return session, dispatch_mouse_event, get_layout_metrics
 
 
+
+def _extract_session(
+    url: str = "https://example.com",
+    title: str = "Example Page",
+    page_text: str = "Acme Corp ships widgets worldwide.",
+    links: list[dict] | None = None,
+):
+    session = SimpleNamespace(
+        get_url=AsyncMock(return_value=url),
+        get_title=AsyncMock(return_value=title),
+        execute_js=AsyncMock(side_effect=[page_text, links or []]),
+    )
+    return session
+
+
 class TestClickAction:
     @pytest.mark.asyncio
     async def test_click_by_index_uses_element_click(self, monkeypatch):
@@ -149,3 +164,89 @@ class TestClickAction:
 
         assert result.success is False
         assert result.error == "Click requires either an index or both x and y viewport coordinates"
+
+
+class TestExtractAction:
+    @pytest.mark.asyncio
+    async def test_extract_uses_response_schema_when_supported(self):
+        llm = SimpleNamespace(
+            supports_response_schema=True,
+            chat_completion=AsyncMock(return_value={"content": '{"company": "Acme Corp"}'}),
+        )
+        session = _extract_session(
+            page_text="Acme Corp is based in San Francisco.",
+            links=[{"text": "About", "href": "https://example.com/about"}],
+        )
+
+        schema = {
+            "type": "object",
+            "properties": {"company": {"type": "string"}},
+            "required": ["company"],
+        }
+
+        result = await actions.extract(
+            goal="Find the company name",
+            json_schema=schema,
+            session=session,
+            dom_state=_dom_state(),
+            llm=llm,
+        )
+
+        assert result.success is True
+        assert result.data["extracted"] == {"company": "Acme Corp"}
+        assert '"company": "Acme Corp"' in result.message
+        assert llm.chat_completion.await_args.kwargs["response_schema"] == schema
+
+    @pytest.mark.asyncio
+    async def test_extract_parses_markdown_wrapped_json_without_schema_support(self):
+        llm = SimpleNamespace(
+            chat_completion=AsyncMock(
+                return_value={"content": '```json\n{"company": "Acme Corp"}\n```'}
+            ),
+        )
+        session = _extract_session(page_text="Acme Corp builds browsers.")
+
+        result = await actions.extract(
+            goal="Return the company name as JSON",
+            json_schema={"type": "object"},
+            session=session,
+            dom_state=_dom_state(),
+            llm=llm,
+        )
+
+        assert result.success is True
+        assert result.data["extracted"] == {"company": "Acme Corp"}
+        assert "response_schema" not in llm.chat_completion.await_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_extract_rejects_invalid_schema_json(self):
+        session = _extract_session()
+        llm = SimpleNamespace(chat_completion=AsyncMock())
+
+        result = await actions.extract(
+            goal="Find the company name",
+            json_schema='{bad json}',
+            session=session,
+            dom_state=_dom_state(),
+            llm=llm,
+        )
+
+        assert result.success is False
+        assert result.error == (
+            "Invalid extraction schema: schema must be valid JSON: "
+            "Expecting property name enclosed in double quotes"
+        )
+
+    @pytest.mark.asyncio
+    async def test_extract_requires_llm_context(self):
+        session = _extract_session()
+
+        result = await actions.extract(
+            goal="Find the company name",
+            session=session,
+            dom_state=_dom_state(),
+            llm=None,
+        )
+
+        assert result.success is False
+        assert result.error == "LLM client not initialized in context"

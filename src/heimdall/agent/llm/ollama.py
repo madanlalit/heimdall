@@ -25,6 +25,8 @@ def _normalize_ollama_base_url(base_url: str) -> str:
 class OllamaLLM(BaseLLM):
     """Ollama client for chat completions with tool calling."""
 
+    supports_response_schema = True
+
     OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
     def __init__(

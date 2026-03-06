@@ -29,6 +29,8 @@ class OpenRouterLLM(BaseLLM):
     - and many more at https://openrouter.ai/models
     """
 
+    supports_response_schema = True
+
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
     def __init__(

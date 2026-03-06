@@ -5,12 +5,14 @@ Implements click, type, navigate, scroll, and other browser actions.
 """
 
 import asyncio
+import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from heimdall.tools.registry import ActionResult, action
 
 if TYPE_CHECKING:
+    from heimdall.agent.llm.base import BaseLLM
     from heimdall.browser.session import BrowserSession
     from heimdall.dom.service import SerializedDOM
 
@@ -138,6 +140,28 @@ async def _convert_viewport_click_coordinates(
             "offset_y": offset_y,
         },
     )
+
+
+def _normalize_extraction_schema(schema: dict[str, Any] | str | None) -> dict[str, Any] | None:
+    """Normalize a user-provided extraction schema into a JSON-schema dict."""
+    if schema is None:
+        return None
+
+    if isinstance(schema, dict):
+        return schema
+
+    if isinstance(schema, str):
+        try:
+            parsed = json.loads(schema)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"schema must be valid JSON: {exc.msg}") from exc
+
+        if not isinstance(parsed, dict):
+            raise ValueError("schema must decode to a JSON object")
+
+        return parsed
+
+    raise ValueError("schema must be a JSON object or JSON string")
 
 
 @action("Click element by index from the DOM list or by viewport coordinates")
@@ -466,6 +490,138 @@ async def execute_js(
         return ActionResult.ok(str(result) if result else "", result=result)
     except Exception as e:
         return ActionResult.fail(f"JS execution failed: {e}")
+
+
+@action("Extract information from the current page using the LLM")
+async def extract(
+    goal: str,
+    session: "BrowserSession",
+    dom_state: "SerializedDOM | None" = None,
+    llm: "BaseLLM | None" = None,
+    json_schema: dict[str, Any] | str | None = None,
+) -> ActionResult:
+    """Extract goal-specific information from the current page."""
+    if llm is None:
+        return ActionResult.fail("LLM client not initialized in context")
+
+    try:
+        normalized_schema = _normalize_extraction_schema(json_schema)
+    except ValueError as exc:
+        return ActionResult.fail(f"Invalid extraction schema: {exc}")
+
+    async def _safe(callable_obj, default):
+        try:
+            return await callable_obj()
+        except Exception:
+            return default
+
+    page_url, page_title, page_text, page_links = await asyncio.gather(
+        _safe(session.get_url, "unknown"),
+        _safe(session.get_title, ""),
+        _safe(
+            lambda: session.execute_js("document.body ? document.body.innerText : ''"),
+            "",
+        ),
+        _safe(
+            lambda: session.execute_js(
+                """(() => Array.from(document.querySelectorAll('a[href]'))
+                    .slice(0, 100)
+                    .map((link) => ({
+                        text: (
+                            link.innerText
+                            || link.getAttribute('aria-label')
+                            || link.getAttribute('title')
+                            || ''
+                        ).trim(),
+                        href: link.href,
+                    }))
+                    .filter((link) => link.text || link.href))()"""
+            ),
+            [],
+        ),
+    )
+
+    interactive_elements = getattr(dom_state, "text", "") if dom_state else ""
+    page_text = page_text or interactive_elements
+
+    if not page_text and not page_links:
+        return ActionResult.fail("No page content available to extract")
+
+    rendered_links = "\n".join(
+        f"- {(link.get('text') or '(no text)')} -> {link.get('href', '')}"
+        for link in page_links
+        if isinstance(link, dict)
+    ) or "None"
+
+    system_prompt = (
+        "You extract information from webpages. Use only the provided page context. "
+        "Never invent facts. "
+        "If a schema is provided, return valid JSON only with no markdown or commentary. "
+        "When data is missing, use null or an empty string/list/object instead of guessing."
+    )
+
+    user_prompt_parts = [
+        f"Goal:\n{goal}",
+        f"Current URL: {page_url}",
+        f"Page title: {page_title or '(untitled)'}",
+        f"Visible page text:\n{page_text}",
+        f"Visible links:\n{rendered_links}",
+    ]
+
+    if interactive_elements:
+        user_prompt_parts.append(f"Interactive elements:\n{interactive_elements}")
+
+    if normalized_schema:
+        user_prompt_parts.append(
+            "Return a JSON response that matches this schema exactly:\n"
+            + json.dumps(normalized_schema, indent=2, ensure_ascii=False)
+        )
+    else:
+        user_prompt_parts.append(
+            "Return the extracted result as concise plain text with no preamble."
+        )
+
+    llm_kwargs: dict[str, Any] = {}
+    if normalized_schema and getattr(llm, "supports_response_schema", False):
+        llm_kwargs["response_schema"] = normalized_schema
+
+    try:
+        response = await llm.chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "\n\n".join(user_prompt_parts)},
+            ],
+            **llm_kwargs,
+        )
+    except Exception as exc:
+        return ActionResult.fail(f"Extraction failed: {exc}")
+
+    content = (response.get("content") or "").strip()
+    if not content:
+        return ActionResult.fail("Extraction returned no content")
+
+    if normalized_schema:
+        from heimdall.utils.text import extract_json_from_markdown
+
+        try:
+            parsed = json.loads(extract_json_from_markdown(content))
+        except json.JSONDecodeError as exc:
+            return ActionResult.fail(f"Extraction returned invalid JSON: {exc.msg}")
+
+        return ActionResult.ok(
+            json.dumps(parsed, indent=2, ensure_ascii=False),
+            extracted=parsed,
+            goal=goal,
+            url=page_url,
+            title=page_title,
+        )
+
+    return ActionResult.ok(
+        content,
+        goal=goal,
+        url=page_url,
+        title=page_title,
+    )
 
 
 @action("Mark task as complete")

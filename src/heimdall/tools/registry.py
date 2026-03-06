@@ -19,10 +19,13 @@ from heimdall.exceptions import ActionError
 ActionFunc: TypeAlias = Callable[..., Any]
 
 if TYPE_CHECKING:
+    from heimdall.agent.llm.base import BaseLLM
     from heimdall.browser.session import BrowserSession
     from heimdall.dom.service import SerializedDOM
 
 logger = logging.getLogger(__name__)
+
+CONTEXT_PARAMS = {"self", "session", "dom_state", "allowed_domains", "llm"}
 
 
 class ActionResult(BaseModel):
@@ -66,18 +69,22 @@ class ToolRegistry:
         self._session: BrowserSession | None = None
         self._dom_state: SerializedDOM | None = None
         self._allowed_domains: list[str] = []
+        self._llm: BaseLLM | None = None
 
     def set_context(
         self,
         session: "BrowserSession",
         dom_state: "SerializedDOM | None" = None,
         allowed_domains: list[str] | None = None,
+        llm: "BaseLLM | None" = None,
     ) -> None:
         """Set execution context for actions."""
         self._session = session
         self._dom_state = dom_state
         if allowed_domains is not None:
             self._allowed_domains = allowed_domains
+        if llm is not None:
+            self._llm = llm
 
     def action(self, description: str) -> Callable[[ActionFunc], ActionFunc]:
         """
@@ -122,7 +129,7 @@ class ToolRegistry:
 
         fields: dict[str, Any] = {}
         for name, param in sig.parameters.items():
-            if name in ("self", "session", "dom_state"):
+            if name in CONTEXT_PARAMS:
                 continue
 
             # Get annotation, defaulting to Any if not available or unresolvable
@@ -173,6 +180,8 @@ class ToolRegistry:
             kwargs["dom_state"] = self._dom_state
         if "allowed_domains" in sig.parameters:
             kwargs["allowed_domains"] = self._allowed_domains
+        if "llm" in sig.parameters:
+            kwargs["llm"] = self._llm
 
         # Execute action
         try:

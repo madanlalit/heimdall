@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 class GoogleLLM(BaseLLM):
     """Google Gemini API client for chat completions with tool calling."""
 
+    supports_response_schema = True
+
     def __init__(
         self,
         api_key: str | None = None,

@@ -199,6 +199,20 @@ class TestExecute:
         assert result.success is False
         assert "session" in result.error.lower()
 
+    @pytest.mark.asyncio
+    async def test_llm_injected_when_requested(self):
+        captured = {}
+
+        @self.reg.action("Needs llm")
+        def needs_llm(llm) -> ActionResult:
+            captured["llm"] = llm
+            return ActionResult.ok()
+
+        mock_llm = object()
+        self.reg.set_context(session=object(), llm=mock_llm)  # type: ignore[arg-type]
+        await self.reg.execute("needs_llm", {})
+        assert captured["llm"] is mock_llm
+
 
 # ── ToolRegistry.schema ───────────────────────────────────────────────────────
 
@@ -247,3 +261,24 @@ class TestSchema:
         assert "x" in params["required"]
         assert "y" in params["required"]
         assert "speed" not in params["required"]
+
+
+    def test_schema_excludes_context_parameters(self):
+        @self.reg.action("Needs context")
+        def needs_context(
+            x: int,
+            session=None,
+            dom_state=None,
+            allowed_domains=None,
+            llm=None,
+        ) -> ActionResult:
+            return ActionResult.ok()
+
+        schema = self.reg.schema()
+        params = schema[0]["function"]["parameters"]
+
+        assert "x" in params["properties"]
+        assert "session" not in params["properties"]
+        assert "dom_state" not in params["properties"]
+        assert "allowed_domains" not in params["properties"]
+        assert "llm" not in params["properties"]
