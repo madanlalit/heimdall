@@ -250,3 +250,122 @@ class TestExtractAction:
 
         assert result.success is False
         assert result.error == "LLM client not initialized in context"
+
+class TestDropdownActions:
+    @pytest.mark.asyncio
+    async def test_select_option_uses_element_helper(self, monkeypatch):
+        from heimdall.browser import element as element_module
+
+        calls: list[tuple[str, object]] = []
+
+        class FakeElement:
+            def __init__(self, session, backend_node_id):
+                calls.append(("init", backend_node_id))
+
+            async def scroll_into_view(self):
+                calls.append(("scroll", None))
+
+            async def select_option(self, value):
+                calls.append(("select", value))
+                return "Canada"
+
+        monkeypatch.setattr(element_module, "Element", FakeElement)
+
+        result = await actions.select_option(
+            index=2,
+            value="Canada",
+            session=object(),
+            dom_state=_dom_state(selector_map={2: {"backend_node_id": 17, "tag": "DIV"}}),
+        )
+
+        assert result.success is True
+        assert result.message == "Selected 'Canada' from dropdown 2"
+        assert result.data["selected"] == "Canada"
+        assert result.data["value"] == "Canada"
+        assert calls == [("init", 17), ("scroll", None), ("select", "Canada")]
+
+    @pytest.mark.asyncio
+    async def test_get_dropdown_options_returns_options(self, monkeypatch):
+        from heimdall.browser import element as element_module
+
+        calls: list[tuple[str, object]] = []
+
+        class FakeElement:
+            def __init__(self, session, backend_node_id):
+                calls.append(("init", backend_node_id))
+
+            async def scroll_into_view(self):
+                calls.append(("scroll", None))
+
+            async def get_dropdown_options(self, open_if_needed=False):
+                calls.append(("options", open_if_needed))
+                return {
+                    "kind": "menu",
+                    "opened": True,
+                    "options": [
+                        {
+                            "label": "First option",
+                            "value": "first",
+                            "selected": False,
+                            "disabled": False,
+                            "role": "menuitem",
+                            "tag": "DIV",
+                        },
+                        {
+                            "label": "Second option",
+                            "value": "second",
+                            "selected": False,
+                            "disabled": False,
+                            "role": "menuitem",
+                            "tag": "DIV",
+                        },
+                    ],
+                }
+
+        monkeypatch.setattr(element_module, "Element", FakeElement)
+
+        result = await actions.get_dropdown_options(
+            index=4,
+            session=object(),
+            dom_state=_dom_state(selector_map={4: {"backend_node_id": 42, "tag": "BUTTON"}}),
+        )
+
+        assert result.success is True
+        assert result.message == "Found 2 options for element 4: First option, Second option"
+        assert result.data["dropdown_type"] == "menu"
+        assert result.data["opened"] is True
+        assert len(result.data["options"]) == 2
+        assert calls == [("init", 42), ("scroll", None), ("options", True)]
+
+    @pytest.mark.asyncio
+    async def test_get_dropdown_options_reports_opened_without_options(self, monkeypatch):
+        from heimdall.browser import element as element_module
+
+        class FakeElement:
+            def __init__(self, session, backend_node_id):
+                del session, backend_node_id
+
+            async def scroll_into_view(self):
+                return None
+
+            async def get_dropdown_options(self, open_if_needed=False):
+                assert open_if_needed is True
+                return {
+                    "kind": "custom",
+                    "opened": True,
+                    "options": [],
+                }
+
+        monkeypatch.setattr(element_module, "Element", FakeElement)
+
+        result = await actions.get_dropdown_options(
+            index=7,
+            session=object(),
+            dom_state=_dom_state(selector_map={7: {"backend_node_id": 70, "tag": "DIV"}}),
+        )
+
+        assert result.success is True
+        assert result.message == "Dropdown at index 7 opened but no options were detected"
+        assert result.data["dropdown_type"] == "custom"
+        assert result.data["opened"] is True
+        assert result.data["options"] == []

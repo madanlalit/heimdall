@@ -102,7 +102,8 @@ You can specify up to 3 actions per step. Available actions:
 - hover: Hover over element - {"hover": {"index": N}}
 - focus: Focus on element - {"focus": {"index": N}}
 - search: Search the web using Google - {"search": {"query": "..."}}
-- select_option: Select dropdown option - {"select_option": {"index": N, "value": "..."}}
+- select_option: Select an option in a native dropdown or custom ARIA menu - {"select_option": {"index": N, "value": "..."}}
+- get_dropdown_options: List options in a native dropdown or custom ARIA menu - {"get_dropdown_options": {"index": N}}
 - new_tab: Open new browser tab - {"new_tab": {"url": "..."}}
 - switch_tab: Switch to tab by index - {"switch_tab": {"tab_index": N}}
 - close_tab: Close tab by index - {"close_tab": {"tab_index": N}}

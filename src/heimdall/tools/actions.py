@@ -792,13 +792,83 @@ async def select_option(
 
     element = Element(session, backend_node_id)
 
-    try:
-        await element.scroll_into_view()
-        selected_text = await element.select_option(value)
-        return ActionResult.ok(f"Selected '{selected_text}' from dropdown {index}")
+    async def _do_select():
+        try:
+            await element.scroll_into_view()
+            selected_text = await element.select_option(value)
+            return ActionResult.ok(
+                f"Selected '{selected_text}' from dropdown {index}",
+                element=element_info,
+                selected=selected_text,
+                value=value,
+            )
+        except Exception as e:
+            return ActionResult.fail(f"Select option failed: {e}")
 
-    except Exception as e:
-        return ActionResult.fail(f"Select option failed: {e}")
+    return await with_retry(
+        _do_select,
+        element_context=f"dropdown {index} ({element_info.get('tag', 'unknown')})",
+    )
+
+
+@action("List available options for a dropdown, combobox, or ARIA menu")
+async def get_dropdown_options(
+    index: int,
+    session: "BrowserSession",
+    dom_state: "SerializedDOM",
+) -> ActionResult:
+    """
+    Get the currently available options for a dropdown-like control.
+
+    Args:
+        index: Element index of the dropdown trigger, select, or menu
+    """
+    if index not in dom_state.selector_map:
+        return ActionResult.fail(f"Invalid element index: {index}")
+
+    element_info = dom_state.selector_map[index]
+    backend_node_id = element_info["backend_node_id"]
+
+    from heimdall.browser.element import Element
+
+    element = Element(session, backend_node_id)
+
+    async def _do_get_options():
+        try:
+            await element.scroll_into_view()
+            dropdown = await element.get_dropdown_options(open_if_needed=True)
+            options = dropdown.get("options", [])
+            option_labels = [
+                str(option.get("label") or option.get("value") or "").strip()
+                for option in options
+                if isinstance(option, dict)
+            ]
+            option_labels = [label for label in option_labels if label]
+            preview = ", ".join(option_labels[:5])
+            if len(option_labels) > 5:
+                preview += f", +{len(option_labels) - 5} more"
+
+            if option_labels:
+                message = f"Found {len(option_labels)} options for element {index}: {preview}"
+            elif dropdown.get("opened"):
+                message = f"Dropdown at index {index} opened but no options were detected"
+            else:
+                message = f"No dropdown options found for element {index}"
+
+            return ActionResult.ok(
+                message,
+                element=element_info,
+                options=options,
+                dropdown_type=dropdown.get("kind", "custom"),
+                opened=bool(dropdown.get("opened", False)),
+            )
+        except Exception as e:
+            return ActionResult.fail(f"Get dropdown options failed: {e}")
+
+    return await with_retry(
+        _do_get_options,
+        element_context=f"dropdown {index} ({element_info.get('tag', 'unknown')})",
+    )
 
 
 @action("Focus on an element (useful before typing)")

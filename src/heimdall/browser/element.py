@@ -8,7 +8,7 @@ Based on browser-use patterns with fallback strategies.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from heimdall.browser.session import BrowserSession
@@ -1085,6 +1085,414 @@ class Element:
 
         return None
 
+    async def _resolve_object_id(self) -> str:
+        """Resolve the DOM node into a runtime object ID."""
+        client = self._session.cdp_client
+        session_id = self._session.session_id
+
+        result = await client.send.DOM.resolveNode(
+            {"backendNodeId": self._backend_node_id},
+            session_id=session_id,
+        )
+        object_id = result.get("object", {}).get("objectId")
+
+        if not object_id:
+            raise RuntimeError(f"Could not resolve element {self._backend_node_id}")
+
+        return object_id
+
+    @staticmethod
+    def _runtime_error_message(result: dict[str, Any]) -> str:
+        """Extract a readable error message from a CDP Runtime response."""
+        details = result.get("exceptionDetails", {}) or {}
+        exception = details.get("exception", {}) or {}
+        return str(exception.get("description") or details.get("text") or details)
+
+    async def _run_dropdown_interaction(
+        self,
+        mode: Literal["inspect", "select"],
+        value: str | None = None,
+        open_if_needed: bool = False,
+    ) -> dict[str, Any]:
+        """Inspect or interact with native and custom dropdown-like controls."""
+        client = self._session.cdp_client
+        session_id = self._session.session_id
+        object_id = await self._resolve_object_id()
+
+        result = await client.send.Runtime.callFunctionOn(
+            {
+                "objectId": object_id,
+                "functionDeclaration": r"""
+                    async function(args) {
+                        const node = this;
+                        const normalize = (value) =>
+                            String(value ?? '').replace(/\s+/g, ' ').trim();
+                        const normalizedNeedle = normalize(args.value).toLowerCase();
+                        const isElement = (value) => value && value.nodeType === Node.ELEMENT_NODE;
+                        const isVisible = (element) => {
+                            if (!isElement(element) || !element.isConnected) return false;
+                            const style = window.getComputedStyle(element);
+                            if (!style) return false;
+                            if (
+                                style.display === 'none' ||
+                                style.visibility === 'hidden'
+                            ) {
+                                return false;
+                            }
+                            if (element.getAttribute('aria-hidden') === 'true') return false;
+                            const rect = element.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0;
+                        };
+                        const isDisabled = (element) => (
+                            element.hasAttribute('disabled') ||
+                            element.getAttribute('aria-disabled') === 'true'
+                        );
+                        const optionSelector = [
+                            'option',
+                            '[role="option"]',
+                            '[role="treeitem"]',
+                            '[role="gridcell"]',
+                            '[role="menuitem"]',
+                            '[role="menuitemcheckbox"]',
+                            '[role="menuitemradio"]'
+                        ].join(',');
+                        const rootSelector = [
+                            '[role="listbox"]',
+                            '[role="menu"]',
+                            '[role="tree"]',
+                            '[role="grid"]',
+                            '[data-state="open"]',
+                            '[data-headlessui-state~="open"]'
+                        ].join(',');
+                        const roots = [];
+                        const seenRoots = new Set();
+                        const addRoot = (element) => {
+                            if (!isElement(element) || seenRoots.has(element)) return;
+                            seenRoots.add(element);
+                            roots.push(element);
+                        };
+                        const toOption = (element) => {
+                            const label = normalize(
+                                element.innerText ||
+                                element.textContent ||
+                                element.getAttribute('aria-label') ||
+                                element.getAttribute('label') ||
+                                element.value ||
+                                element.getAttribute('data-value') ||
+                                element.title
+                            );
+                            const value = normalize(
+                                element.value ??
+                                element.getAttribute('value') ??
+                                element.getAttribute('data-value') ??
+                                element.getAttribute('aria-label') ??
+                                label
+                            );
+                            return {
+                                label,
+                                value,
+                                selected:
+                                    element.selected === true ||
+                                    element.getAttribute('aria-selected') === 'true' ||
+                                    element.getAttribute('aria-checked') === 'true',
+                                disabled: isDisabled(element),
+                                role: normalize(element.getAttribute('role')),
+                                tag: normalize(element.tagName)
+                            };
+                        };
+                        const controlledIds = (element) => [
+                            element.getAttribute('aria-controls'),
+                            element.getAttribute('aria-owns')
+                        ]
+                            .filter(Boolean)
+                            .join(' ')
+                            .split(/\s+/)
+                            .map((value) => normalize(value))
+                            .filter(Boolean);
+                        const collectOptions = (root) => {
+                            if (!isElement(root)) return [];
+                            if (root.tagName === 'SELECT') {
+                                return Array.from(root.options).map((element) => ({
+                                    element,
+                                    ...toOption(element)
+                                }));
+                            }
+                            if (root.tagName === 'DATALIST') {
+                                return Array.from(root.options || []).map((element) => ({
+                                    element,
+                                    ...toOption(element)
+                                }));
+                            }
+                            const candidates = root.matches(optionSelector)
+                                ? [root]
+                                : Array.from(root.querySelectorAll(optionSelector));
+                            return candidates
+                                .filter((element) => isVisible(element) || root === node)
+                                .map((element) => ({ element, ...toOption(element) }))
+                                .filter((option) => option.label || option.value);
+                        };
+                        const addControlledRoots = (element) => {
+                            controlledIds(element).forEach((id) => {
+                                addRoot(document.getElementById(id));
+                            });
+                            const activeDescendant = normalize(
+                                element.getAttribute('aria-activedescendant')
+                            );
+                            if (!activeDescendant) return;
+                            const active = document.getElementById(activeDescendant);
+                            if (!active) return;
+                            addRoot(
+                                active.closest(
+                                    '[role="listbox"], [role="menu"], [role="tree"], [role="grid"]'
+                                )
+                            );
+                            addRoot(active);
+                        };
+                        const nodeRect = node.getBoundingClientRect();
+                        const nodeCenter = {
+                            x: nodeRect.left + nodeRect.width / 2,
+                            y: nodeRect.top + nodeRect.height / 2
+                        };
+                        const distance = (element) => {
+                            const rect = element.getBoundingClientRect();
+                            const bx = rect.left + rect.width / 2;
+                            const by = rect.top + rect.height / 2;
+                            return Math.hypot(nodeCenter.x - bx, nodeCenter.y - by);
+                        };
+                        const addNearbyRoots = () => {
+                            Array.from(document.querySelectorAll(rootSelector))
+                                .filter((element) => isVisible(element))
+                                .filter((element) => element !== node)
+                                .filter((element) => {
+                                    return (
+                                        element.matches(optionSelector) ||
+                                        element.querySelector(optionSelector)
+                                    );
+                                })
+                                .map((element) => ({
+                                    element,
+                                    distance: distance(element)
+                                }))
+                                .sort((left, right) => left.distance - right.distance)
+                                .slice(0, 5)
+                                .forEach(({ element }) => addRoot(element));
+                        };
+                        const addIntrinsicRoots = () => {
+                            if (
+                                node.tagName === 'SELECT' ||
+                                node.tagName === 'DATALIST'
+                            ) {
+                                addRoot(node);
+                            }
+                            addRoot(
+                                node.closest(
+                                    '[role="listbox"], [role="menu"], [role="tree"], [role="grid"]'
+                                )
+                            );
+                            if (node.matches(optionSelector)) {
+                                addRoot(node);
+                            }
+                            addControlledRoots(node);
+                            if (!node.id) return;
+                            Array.from(document.querySelectorAll('[aria-labelledby]'))
+                                .filter((element) => {
+                                    const labelledBy = normalize(
+                                        element.getAttribute('aria-labelledby')
+                                    );
+                                    if (!labelledBy) return false;
+                                    return labelledBy.split(/\s+/).includes(node.id);
+                                })
+                                .forEach((element) => addRoot(element));
+                        };
+                        const snapshot = () => {
+                            const seenOptions = new Set();
+                            const options = [];
+                            roots.forEach((root) => {
+                                collectOptions(root).forEach((entry) => {
+                                    const key = [
+                                        entry.label,
+                                        entry.value,
+                                        entry.role,
+                                        entry.tag,
+                                        entry.element.id || ''
+                                    ].join('::');
+                                    if (seenOptions.has(key)) return;
+                                    seenOptions.add(key);
+                                    options.push(entry);
+                                });
+                            });
+                            return options;
+                        };
+                        const refreshOptions = () => {
+                            roots.length = 0;
+                            seenRoots.clear();
+                            addIntrinsicRoots();
+                            addNearbyRoots();
+                            return snapshot();
+                        };
+                        const maybeOpen = async () => {
+                            if (
+                                node.tagName === 'SELECT' ||
+                                node.matches('[role="listbox"], [role="menu"]')
+                            ) {
+                                return {
+                                    opened: false,
+                                    options: refreshOptions()
+                                };
+                            }
+                            node.focus?.();
+                            if (typeof node.showPicker === 'function') {
+                                try {
+                                    node.showPicker();
+                                } catch (error) {
+                                }
+                            }
+                            node.click?.();
+                            const maxWaitMs = 500;
+                            const pollIntervalMs = 50;
+                            let waitedMs = 0;
+                            let options = refreshOptions();
+                            let opened =
+                                node.getAttribute('aria-expanded') === 'true' ||
+                                roots.length > 0;
+
+                            while (!options.length && waitedMs < maxWaitMs) {
+                                await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+                                waitedMs += pollIntervalMs;
+                                options = refreshOptions();
+                                opened =
+                                    opened ||
+                                    node.getAttribute('aria-expanded') === 'true' ||
+                                    roots.length > 0;
+                            }
+
+                            return {
+                                opened,
+                                options
+                            };
+                        };
+
+                        let options = refreshOptions();
+                        let opened = false;
+
+                        if (!options.length && args.openIfNeeded) {
+                            const openResult = await maybeOpen();
+                            opened = openResult.opened;
+                            options = openResult.options;
+                        }
+
+                        const serializableOptions = options.map(({ element, ...option }) => option);
+                        const kind = node.tagName === 'SELECT'
+                            ? 'select'
+                            : serializableOptions.some((option) =>
+                                option.role.startsWith('menuitem')
+                            )
+                                ? 'menu'
+                                : 'custom';
+
+                        if (args.mode === 'inspect') {
+                            return {
+                                kind,
+                                opened,
+                                options: serializableOptions
+                            };
+                        }
+
+                        if (!normalizedNeedle) {
+                            throw new Error('Option value is required');
+                        }
+
+                        const exactMatch = options.find((option) =>
+                            normalize(option.label).toLowerCase() === normalizedNeedle ||
+                            normalize(option.value).toLowerCase() === normalizedNeedle
+                        );
+                        const partialMatches = options.filter((option) =>
+                            normalize(option.label).toLowerCase().includes(normalizedNeedle) ||
+                            normalize(option.value).toLowerCase().includes(normalizedNeedle)
+                        );
+                        const match = exactMatch || (
+                            partialMatches.length === 1 ? partialMatches[0] : null
+                        );
+
+                        if (!match) {
+                            throw new Error(
+                                `Option not found: ${args.value}. Available: ${serializableOptions
+                                    .map((option) => option.label || option.value)
+                                    .filter(Boolean)
+                                    .join(', ')}`
+                            );
+                        }
+                        if (match.disabled) {
+                            throw new Error(`Option is disabled: ${match.label || match.value}`);
+                        }
+
+                        if (node.tagName === 'SELECT') {
+                            const nativeOption = Array.from(node.options).find((element) =>
+                                normalize(element.text).toLowerCase() === normalizedNeedle ||
+                                normalize(element.value).toLowerCase() === normalizedNeedle
+                            );
+                            if (!nativeOption) {
+                                throw new Error(`Option not found: ${args.value}`);
+                            }
+                            node.value = nativeOption.value;
+                            nativeOption.selected = true;
+                            node.dispatchEvent(new Event('input', { bubbles: true }));
+                            node.dispatchEvent(new Event('change', { bubbles: true }));
+                            return {
+                                kind,
+                                opened,
+                                option: {
+                                    label: normalize(nativeOption.text),
+                                    value: normalize(nativeOption.value)
+                                }
+                            };
+                        }
+
+                        match.element.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+                        match.element.click?.();
+                        match.element.dispatchEvent?.(new Event('input', { bubbles: true }));
+                        match.element.dispatchEvent?.(new Event('change', { bubbles: true }));
+                        return {
+                            kind,
+                            opened,
+                            option: {
+                                label: match.label,
+                                value: match.value
+                            }
+                        };
+                    }
+                """,
+                "arguments": [
+                    {
+                        "value": {
+                            "mode": mode,
+                            "value": value,
+                            "openIfNeeded": open_if_needed,
+                        }
+                    }
+                ],
+                "returnByValue": True,
+                "awaitPromise": True,
+            },
+            session_id=session_id,
+        )
+
+        if "exceptionDetails" in result:
+            raise RuntimeError(self._runtime_error_message(result))
+
+        payload = result.get("result", {}).get("value")
+        if not isinstance(payload, dict):
+            raise RuntimeError("Dropdown interaction returned an invalid response")
+
+        return payload
+
+    async def get_dropdown_options(self, open_if_needed: bool = False) -> dict[str, Any]:
+        """Return the available options for a native or custom dropdown."""
+        return await self._run_dropdown_interaction(
+            mode="inspect",
+            open_if_needed=open_if_needed,
+        )
+
     async def select_option(self, value: str) -> str:
         """
         Select an option by value or text.
@@ -1095,46 +1503,17 @@ class Element:
         Returns:
             The text of the selected option
         """
-        client = self._session.cdp_client
-        session_id = self._session.session_id
-
-        # Get object ID
-        result = await client.send.DOM.resolveNode(
-            {"backendNodeId": self._backend_node_id},
-            session_id=session_id,
+        result = await self._run_dropdown_interaction(
+            mode="select",
+            value=value,
+            open_if_needed=True,
         )
-        object_id = result.get("object", {}).get("objectId")
+        option = result.get("option", {})
+        if not isinstance(option, dict):
+            raise RuntimeError("Dropdown selection returned an invalid response")
 
-        if not object_id:
-            raise RuntimeError(f"Could not resolve element {self._backend_node_id}")
+        selected = str(option.get("label") or option.get("value") or "").strip()
+        if not selected:
+            raise RuntimeError("Dropdown selection returned an empty option")
 
-        # Execute JS on the element
-        result = await client.send.Runtime.callFunctionOn(
-            {
-                "objectId": object_id,
-                "functionDeclaration": """
-                    function(value) {
-                        const node = this;
-                        if (node.tagName !== 'SELECT') throw new Error('Not a select element');
-
-                        for (let opt of node.options) {
-                            if (opt.value === value || opt.text === value) {
-                                opt.selected = true;
-                                node.dispatchEvent(new Event('change', { bubbles: true }));
-                                return opt.text;
-                            }
-                        }
-                        throw new Error('Option not found: ' + value);
-                    }
-                """,
-                "arguments": [{"value": value}],
-                "returnByValue": True,
-                "awaitPromise": True,
-            },
-            session_id=session_id,
-        )
-
-        if "exceptionDetails" in result:
-            raise RuntimeError(f"Selection failed: {result['exceptionDetails']}")
-
-        return result.get("result", {}).get("value", "")
+        return selected
