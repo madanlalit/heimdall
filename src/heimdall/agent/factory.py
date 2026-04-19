@@ -52,8 +52,7 @@ def _resolve_auto_provider() -> LLMProvider:
             if _module_available(module):
                 return provider  # type: ignore[return-value]
             logger.warning(
-                "%s is set but the '%s' SDK is not installed. "
-                "Install it with: uv sync --extra %s",
+                "%s is set but the '%s' SDK is not installed. Install it with: uv sync --extra %s",
                 env_key,
                 module,
                 provider,
