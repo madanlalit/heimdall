@@ -4,9 +4,12 @@ Agent Factory.
 Helpers for creating agent components.
 """
 
+import logging
 import os
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 from heimdall.agent.llm import AnthropicLLM, OllamaLLM, OpenAILLM
 from heimdall.config import (
@@ -37,16 +40,25 @@ def _resolve_auto_provider() -> LLMProvider:
       1) Providers that have both their API credentials and SDK installed
       2) First available installed SDK fallback
     """
-    if os.getenv("OPENROUTER_API_KEY") and _module_available("openai"):
-        return "openrouter"
-    if os.getenv("OPENAI_API_KEY") and _module_available("openai"):
-        return "openai"
-    if os.getenv("ANTHROPIC_API_KEY") and _module_available("anthropic"):
-        return "anthropic"
-    if os.getenv("GOOGLE_API_KEY") and _module_available("google.genai"):
-        return "google"
-    if os.getenv("GROQ_API_KEY") and _module_available("groq"):
-        return "groq"
+    _KEY_TO_PROVIDER: list[tuple[str, str, str]] = [
+        ("OPENROUTER_API_KEY", "openai", "openrouter"),
+        ("OPENAI_API_KEY", "openai", "openai"),
+        ("ANTHROPIC_API_KEY", "anthropic", "anthropic"),
+        ("GOOGLE_API_KEY", "google.genai", "google"),
+        ("GROQ_API_KEY", "groq", "groq"),
+    ]
+    for env_key, module, provider in _KEY_TO_PROVIDER:
+        if os.getenv(env_key):
+            if _module_available(module):
+                return provider  # type: ignore[return-value]
+            logger.warning(
+                "%s is set but the '%s' SDK is not installed. "
+                "Install it with: uv sync --extra %s",
+                env_key,
+                module,
+                provider,
+            )
+
     if (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST")) and _module_available("openai"):
         return "ollama"
     if _module_available("boto3") and (
