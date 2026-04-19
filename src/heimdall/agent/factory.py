@@ -9,8 +9,6 @@ import os
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
-
 from heimdall.agent.llm import AnthropicLLM, OllamaLLM, OpenAILLM
 from heimdall.config import (
     DEFAULT_ANTHROPIC_MODEL,
@@ -25,6 +23,8 @@ from heimdall.config import (
 
 if TYPE_CHECKING:
     from heimdall.agent.llm import BaseLLM
+
+logger = logging.getLogger(__name__)
 
 
 def _module_available(module_name: str) -> bool:
